@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use arrow::array::AsArray;
-use arrow_array::{types::Float32Type, Array, FixedSizeListArray};
+use arrow::array::{types::Float32Type, Array, FixedSizeListArray};
 use arrow_select::concat::concat;
 use clap::Parser;
 use futures::StreamExt;
