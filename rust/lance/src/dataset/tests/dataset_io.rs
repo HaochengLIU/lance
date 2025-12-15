@@ -273,6 +273,154 @@ async fn test_write_params(
 
 #[rstest]
 #[tokio::test]
+async fn test_write_with_column_stats(
+    #[values(LanceFileVersion::Stable)] data_storage_version: LanceFileVersion,
+) {
+    use crate::dataset::fragment::FragReadConfig;
+
+    let test_uri = "/Users/haochengliu/Documents/projects/lance/ColStats";
+
+    let schema = Arc::new(ArrowSchema::new(vec![ArrowField::new(
+        "i",
+        DataType::Int32,
+        false,
+    )]));
+
+    let num_rows: usize = 20;
+    let batches = vec![RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from_iter_values(0..num_rows as i32))],
+    )
+    .unwrap()];
+    let batches = RecordBatchIterator::new(batches.into_iter().map(Ok), schema.clone());
+
+    let write_params = WriteParams {
+        max_rows_per_file: 10,
+        max_rows_per_group: 2,
+        mode: WriteMode::Overwrite,
+        data_storage_version: Some(data_storage_version),
+        ..Default::default()
+    };
+
+    let dataset = Dataset::write(batches, test_uri, Some(write_params))
+        .await
+        .unwrap();
+
+    assert_eq!(dataset.count_rows(None).await.unwrap(), num_rows);
+
+    // Read all the metadata and footers of the fragments
+    let fragments = dataset.get_fragments();
+    assert_eq!(
+        fragments.len(),
+        2,
+        "Should have 2 fragments (20 rows / 10 rows per file)"
+    );
+
+    for fragment in fragments {
+        let frag_meta = fragment.metadata();
+
+        // Print all fragment-level metadata
+        println!("\n=== Fragment {} ===", fragment.id());
+        println!("  Fragment ID: {}", frag_meta.id);
+        println!("  Physical rows: {:?}", frag_meta.physical_rows);
+        println!("  Number of data files: {}", frag_meta.files.len());
+        println!("  Deletion file: {:?}", frag_meta.deletion_file);
+        println!("  Row ID meta: {:?}", frag_meta.row_id_meta.is_some());
+        println!(
+            "  Created at version: {:?}",
+            frag_meta.created_at_version_meta
+        );
+        println!(
+            "  Last updated at version: {:?}",
+            frag_meta.last_updated_at_version_meta
+        );
+
+        // Print data file metadata and column metadata
+        for (file_idx, data_file) in frag_meta.files.iter().enumerate() {
+            println!("\n  Data File {}:", file_idx);
+            println!("    Path: {}", data_file.path);
+            println!("    Field IDs: {:?}", data_file.fields);
+            println!("    Column indices: {:?}", data_file.column_indices);
+            println!(
+                "    File version: {}.{}",
+                data_file.file_major_version, data_file.file_minor_version
+            );
+            println!("    File size: {:?}", data_file.file_size_bytes.get());
+            println!("    Base ID: {:?}", data_file.base_id);
+
+            // Open file reader directly to access column metadata
+            use lance_core::cache::LanceCache;
+            use lance_encoding::decoder::DecoderPlugins;
+            use lance_file::reader::{FileReader, FileReaderOptions};
+            use lance_io::scheduler::{ScanScheduler, SchedulerConfig};
+            use lance_io::utils::CachedFileSize;
+
+            // Construct full path to data file
+            let file_path = dataset.base.child("data").child(data_file.path.as_str());
+            let scheduler = ScanScheduler::new(
+                dataset.object_store.clone(),
+                SchedulerConfig::max_bandwidth(&dataset.object_store),
+            );
+            let file_scheduler = scheduler
+                .open_file(&file_path, &CachedFileSize::unknown())
+                .await
+                .unwrap();
+            let file_reader = FileReader::try_open(
+                file_scheduler,
+                None,
+                Arc::<DecoderPlugins>::default(),
+                &LanceCache::no_cache(),
+                FileReaderOptions::default(),
+            )
+            .await
+            .unwrap();
+            let file_metadata = file_reader.metadata();
+
+            // Print column metadata (from line 605 in writer.rs - write_column_metadatas)
+            println!(
+                "\n    Column Metadatas ({} columns):",
+                file_metadata.column_metadatas.len()
+            );
+            for (col_idx, col_metadata) in file_metadata.column_metadatas.iter().enumerate() {
+                println!("\n      Column {} Metadata:", col_idx);
+                println!("        Number of pages: {}", col_metadata.pages.len());
+                println!("        Buffer offsets: {:?}", col_metadata.buffer_offsets);
+                println!("        Buffer sizes: {:?}", col_metadata.buffer_sizes);
+                println!("        Encoding: {:?}", col_metadata.encoding);
+
+                // Print page-level metadata
+                for (page_idx, page) in col_metadata.pages.iter().enumerate() {
+                    println!("\n        Page {}:", page_idx);
+                    println!("          Length (rows): {}", page.length);
+                    println!("          Priority: {}", page.priority);
+                    println!("          Buffer offsets: {:?}", page.buffer_offsets);
+                    println!("          Buffer sizes: {:?}", page.buffer_sizes);
+                    println!(
+                        "          Total page size: {} bytes",
+                        page.buffer_sizes.iter().sum::<u64>()
+                    );
+                    println!("          Encoding: {:?}", page.encoding);
+                }
+            }
+        }
+
+        // Check fragment has expected number of rows
+        let fragment_rows = frag_meta.physical_rows.unwrap_or(0);
+        assert_eq!(
+            fragment_rows, 10,
+            "Each fragment should have 10 rows (max_rows_per_file)"
+        );
+
+        // Check fragment has data files
+        assert!(
+            !frag_meta.files.is_empty(),
+            "Fragment should have at least one data file"
+        );
+    }
+}
+
+#[rstest]
+#[tokio::test]
 async fn test_write_manifest(
     #[values(LanceFileVersion::Legacy, LanceFileVersion::Stable)]
     data_storage_version: LanceFileVersion,
