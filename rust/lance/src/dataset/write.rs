@@ -252,6 +252,10 @@ pub struct WriteParams {
     /// These will be resolved to IDs when the write operation executes.
     /// Resolution happens at builder execution time when dataset context is available.
     pub target_base_names_or_paths: Option<Vec<String>>,
+
+    /// If true, enable column statistics generation when writing data files.
+    /// Column statistics can be used for query optimization and filtering.
+    pub enable_column_stats: bool,
 }
 
 impl Default for WriteParams {
@@ -276,6 +280,7 @@ impl Default for WriteParams {
             initial_bases: None,
             target_bases: None,
             target_base_names_or_paths: None,
+            enable_column_stats: false,
         }
     }
 }
@@ -405,6 +410,7 @@ pub async fn do_write_fragments(
         schema,
         storage_version,
         target_bases_info,
+        params.enable_column_stats,
     );
     let mut writer: Option<Box<dyn GenericWriter>> = None;
     let mut num_rows_in_current_file = 0;
@@ -775,7 +781,16 @@ pub async fn open_writer(
     base_dir: &Path,
     storage_version: LanceFileVersion,
 ) -> Result<Box<dyn GenericWriter>> {
-    open_writer_with_options(object_store, schema, base_dir, storage_version, true, None).await
+    open_writer_with_options(
+        object_store,
+        schema,
+        base_dir,
+        storage_version,
+        true,
+        None,
+        false,
+    )
+    .await
 }
 
 pub async fn open_writer_with_options(
@@ -785,6 +800,7 @@ pub async fn open_writer_with_options(
     storage_version: LanceFileVersion,
     add_data_dir: bool,
     base_id: Option<u32>,
+    enable_column_stats: bool,
 ) -> Result<Box<dyn GenericWriter>> {
     let data_file_key = generate_random_filename();
     let filename = format!("{}.lance", data_file_key);
@@ -816,6 +832,7 @@ pub async fn open_writer_with_options(
             schema.clone(),
             FileWriterOptions {
                 format_version: Some(storage_version),
+                enable_column_stats,
                 ..Default::default()
             },
         )?;
@@ -863,6 +880,8 @@ struct WriterGenerator {
     target_bases_info: Option<Vec<TargetBaseInfo>>,
     /// Counter for round-robin selection
     next_base_index: AtomicUsize,
+    /// Whether to enable column statistics generation
+    enable_column_stats: bool,
 }
 
 impl WriterGenerator {
@@ -872,6 +891,7 @@ impl WriterGenerator {
         schema: &Schema,
         storage_version: LanceFileVersion,
         target_bases_info: Option<Vec<TargetBaseInfo>>,
+        enable_column_stats: bool,
     ) -> Self {
         Self {
             object_store,
@@ -880,6 +900,7 @@ impl WriterGenerator {
             storage_version,
             target_bases_info,
             next_base_index: AtomicUsize::new(0),
+            enable_column_stats,
         }
     }
 
@@ -906,14 +927,18 @@ impl WriterGenerator {
                 self.storage_version,
                 base_info.is_dataset_root,
                 Some(base_info.base_id),
+                self.enable_column_stats,
             )
             .await?
         } else {
-            open_writer(
+            open_writer_with_options(
                 &self.object_store,
                 &self.schema,
                 &self.base_dir,
                 self.storage_version,
+                true,
+                None,
+                self.enable_column_stats,
             )
             .await?
         };
@@ -1389,6 +1414,7 @@ mod tests {
             &schema,
             LanceFileVersion::Stable,
             Some(target_bases),
+            false, // enable_column_stats
         );
 
         // Create a writer
@@ -1434,6 +1460,7 @@ mod tests {
             LanceFileVersion::Stable,
             false, // Don't add /data
             None,
+            false, // enable_column_stats
         )
         .await
         .unwrap();
@@ -1499,6 +1526,7 @@ mod tests {
             &schema,
             LanceFileVersion::Stable,
             Some(target_bases),
+            false, // enable_column_stats
         );
 
         // Create test batch

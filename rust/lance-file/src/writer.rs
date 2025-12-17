@@ -6,7 +6,12 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use arrow_array::ArrayRef;
 use arrow_array::RecordBatch;
+use arrow_schema::DataType;
+use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
+use datafusion_common::ScalarValue;
+use datafusion_expr::Accumulator;
 
 use arrow_data::ArrayData;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -98,6 +103,136 @@ pub struct FileWriterOptions {
     /// versions may have more efficient encodings.  However, newer format versions will
     /// require more up-to-date readers to read the data.
     pub format_version: Option<LanceFileVersion>,
+
+    /// If true, enable column statistics generation when writing data files.
+    /// Column statistics can be used for query optimization and filtering.
+    pub enable_column_stats: bool,
+}
+
+/// Column statistics for a single zone
+#[derive(Debug, Clone)]
+struct ColumnZoneStatistics {
+    min: ScalarValue,
+    max: ScalarValue,
+    null_count: u32,
+    nan_count: u32,
+    zone_start: u64,
+    zone_length: u64,
+}
+
+/// Statistics processor for a single column
+struct ColumnStatisticsProcessor {
+    data_type: DataType,
+    min: MinAccumulator,
+    max: MaxAccumulator,
+    null_count: u32,
+    nan_count: u32,
+    current_zone_rows: u64,
+    zone_start: u64,
+    zones: Vec<ColumnZoneStatistics>,
+}
+
+impl ColumnStatisticsProcessor {
+    fn new(data_type: DataType, zone_start: u64) -> Result<Self> {
+        let min = MinAccumulator::try_new(&data_type)
+            .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+        let max = MaxAccumulator::try_new(&data_type)
+            .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+        Ok(Self {
+            data_type,
+            min,
+            max,
+            null_count: 0,
+            nan_count: 0,
+            current_zone_rows: 0,
+            zone_start,
+            zones: Vec::new(),
+        })
+    }
+
+    fn count_nans(array: &ArrayRef) -> u32 {
+        match array.data_type() {
+            DataType::Float16 => {
+                let array = array
+                    .as_any()
+                    .downcast_ref::<arrow_array::Float16Array>()
+                    .unwrap();
+                array.values().iter().filter(|&&x| x.is_nan()).count() as u32
+            }
+            DataType::Float32 => {
+                let array = array
+                    .as_any()
+                    .downcast_ref::<arrow_array::Float32Array>()
+                    .unwrap();
+                array.values().iter().filter(|&&x| x.is_nan()).count() as u32
+            }
+            DataType::Float64 => {
+                let array = array
+                    .as_any()
+                    .downcast_ref::<arrow_array::Float64Array>()
+                    .unwrap();
+                array.values().iter().filter(|&&x| x.is_nan()).count() as u32
+            }
+            _ => 0,
+        }
+    }
+
+    fn process_chunk(&mut self, array: &ArrayRef, zone_size: u64) -> Result<()> {
+        let num_rows = array.len() as u64;
+        self.null_count += array.null_count() as u32;
+        self.nan_count += Self::count_nans(array);
+        self.min
+            .update_batch(std::slice::from_ref(array))
+            .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+        self.max
+            .update_batch(std::slice::from_ref(array))
+            .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+        self.current_zone_rows += num_rows;
+
+        // If zone is full, finalize it and start a new one
+        if self.current_zone_rows >= zone_size {
+            self.finish_zone()?;
+        }
+
+        Ok(())
+    }
+
+    fn finish_zone(&mut self) -> Result<()> {
+        if self.current_zone_rows > 0 {
+            let stats = ColumnZoneStatistics {
+                min: self
+                    .min
+                    .evaluate()
+                    .map_err(|e| Error::invalid_input(e.to_string(), location!()))?,
+                max: self
+                    .max
+                    .evaluate()
+                    .map_err(|e| Error::invalid_input(e.to_string(), location!()))?,
+                null_count: self.null_count,
+                nan_count: self.nan_count,
+                zone_start: self.zone_start,
+                zone_length: self.current_zone_rows,
+            };
+            self.zones.push(stats);
+
+            // Reset for next zone
+            self.min = MinAccumulator::try_new(&self.data_type)
+                .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+            self.max = MaxAccumulator::try_new(&self.data_type)
+                .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+            self.null_count = 0;
+            self.nan_count = 0;
+            self.zone_start += self.current_zone_rows;
+            self.current_zone_rows = 0;
+        }
+        Ok(())
+    }
+
+    fn finalize(&mut self) -> Result<Vec<ColumnZoneStatistics>> {
+        // Finish the last zone if it has data
+        self.finish_zone()?;
+        Ok(std::mem::take(&mut self.zones))
+    }
 }
 
 pub struct FileWriter {
@@ -111,6 +246,8 @@ pub struct FileWriter {
     global_buffers: Vec<(u64, u64)>,
     schema_metadata: HashMap<String, String>,
     options: FileWriterOptions,
+    /// Column statistics processors (one per column), only initialized if enable_column_stats is true
+    column_stats_processors: Option<Vec<ColumnStatisticsProcessor>>,
 }
 
 fn initial_column_metadata() -> pbfile::ColumnMetadata {
@@ -166,6 +303,7 @@ impl FileWriter {
             global_buffers: Vec::new(),
             schema_metadata: HashMap::new(),
             options,
+            column_stats_processors: None,
         }
     }
 
@@ -330,6 +468,17 @@ impl FileWriter {
         self.schema_metadata
             .extend(std::mem::take(&mut schema.metadata));
         self.schema = Some(schema);
+
+        // Initialize column statistics processors if enabled
+        if self.options.enable_column_stats {
+            let mut processors = Vec::new();
+            for field in &self.schema.as_ref().unwrap().fields {
+                let data_type = field.data_type().clone();
+                processors.push(ColumnStatisticsProcessor::new(data_type, 0)?);
+            }
+            self.column_stats_processors = Some(processors);
+        }
+
         Ok(())
     }
 
@@ -423,6 +572,23 @@ impl FileWriter {
         };
 
         self.write_pages(encoding_tasks).await?;
+
+        // Accumulate column statistics if enabled
+        if let Some(ref mut processors) = self.column_stats_processors {
+            const ZONE_SIZE: u64 = 1_000_000; // 1 million rows per zone
+            for (field, processor) in self
+                .schema
+                .as_ref()
+                .unwrap()
+                .fields
+                .iter()
+                .zip(processors.iter_mut())
+            {
+                if let Some(array) = batch.column_by_name(&field.name) {
+                    processor.process_chunk(array, ZONE_SIZE)?;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -597,6 +763,10 @@ impl FileWriter {
         self.finish_writers().await?;
 
         // 3. write global buffers (we write the schema here)
+        // Build the column statistics if enabled
+        if self.options.enable_column_stats {
+            self.build_column_statistics().await?;
+        }
         let global_buffer_offsets = self.write_global_buffers().await?;
         let num_global_buffers = global_buffer_offsets.len() as u32;
 
@@ -636,6 +806,90 @@ impl FileWriter {
 
     pub async fn abort(&mut self) {
         self.writer.abort().await;
+    }
+
+    /// Build column statistics for the written data.
+    ///
+    /// This method is called when `enable_column_stats` is true in the writer options.
+    /// The statistics can be used for query optimization and filtering.
+    ///
+    /// Statistics are computed per column with zones of 1 million rows each, tracking
+    /// min, max, null_count, and nan_count for each zone.
+    async fn build_column_statistics(&mut self) -> Result<()> {
+        let processors = match self.column_stats_processors.take() {
+            Some(processors) => processors,
+            None => return Ok(()), // Statistics not enabled
+        };
+
+        let schema = self.schema.as_ref().ok_or_else(|| {
+            Error::invalid_input(
+                "Cannot build statistics: schema not initialized",
+                location!(),
+            )
+        })?;
+
+        // Finalize statistics for all columns
+        let mut all_column_stats = Vec::new();
+        for (field, mut processor) in schema.fields.iter().zip(processors.into_iter()) {
+            let zones = processor.finalize()?;
+            all_column_stats.push((field.name.clone(), zones));
+        }
+
+        // Store statistics in schema metadata for now
+        // In the future, this could be stored in a separate statistics section
+        for (column_name, zones) in all_column_stats {
+            if !zones.is_empty() {
+                // Store zone count in metadata
+                let zone_count_key = format!("lance:column_stats:{}:zone_count", column_name);
+                self.schema_metadata
+                    .insert(zone_count_key, zones.len().to_string());
+
+                // Store zone size (1 million) in metadata
+                let zone_size_key = format!("lance:column_stats:{}:zone_size", column_name);
+                self.schema_metadata
+                    .insert(zone_size_key, "1000000".to_string());
+
+                // For each zone, store min, max, null_count, nan_count
+                for (zone_idx, zone) in zones.iter().enumerate() {
+                    let zone_prefix =
+                        format!("lance:column_stats:{}:zone_{}", column_name, zone_idx);
+
+                    // Store min (as string representation)
+                    let min_str = format!("{:?}", zone.min);
+                    self.schema_metadata
+                        .insert(format!("{}:min", zone_prefix), min_str);
+
+                    // Store max (as string representation)
+                    let max_str = format!("{:?}", zone.max);
+                    self.schema_metadata
+                        .insert(format!("{}:max", zone_prefix), max_str);
+
+                    // Store null_count
+                    self.schema_metadata.insert(
+                        format!("{}:null_count", zone_prefix),
+                        zone.null_count.to_string(),
+                    );
+
+                    // Store nan_count
+                    self.schema_metadata.insert(
+                        format!("{}:nan_count", zone_prefix),
+                        zone.nan_count.to_string(),
+                    );
+
+                    // Store zone_start and zone_length
+                    self.schema_metadata.insert(
+                        format!("{}:zone_start", zone_prefix),
+                        zone.zone_start.to_string(),
+                    );
+                    self.schema_metadata.insert(
+                        format!("{}:zone_length", zone_prefix),
+                        zone.zone_length.to_string(),
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn tell(&mut self) -> Result<u64> {

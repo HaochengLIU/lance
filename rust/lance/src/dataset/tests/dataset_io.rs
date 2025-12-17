@@ -299,6 +299,7 @@ async fn test_write_with_column_stats(
         max_rows_per_group: 2,
         mode: WriteMode::Overwrite,
         data_storage_version: Some(data_storage_version),
+        enable_column_stats: true,
         ..Default::default()
     };
 

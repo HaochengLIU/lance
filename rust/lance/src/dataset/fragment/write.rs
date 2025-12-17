@@ -146,6 +146,7 @@ impl<'a> FragmentCreateBuilder<'a> {
             schema,
             FileWriterOptions {
                 format_version: params.data_storage_version,
+                enable_column_stats: params.enable_column_stats,
                 ..Default::default()
             },
         )?;
