@@ -17,32 +17,9 @@ use lance_core::{Result, ROW_ADDR};
 use lance_datafusion::chunker::chunk_concat_stream;
 use snafu::location;
 
-//
-// Example: Suppose we have two fragments, each with 4 rows.
-// Fragment 0: start = 0, length = 4  // covers rows 0, 1, 2, 3 in fragment 0
-// The row addresses for fragment 0 are: 0, 1, 2, 3
-// Fragment 1: start = 0, length = 4  // covers rows 0, 1, 2, 3 in fragment 1
-// The row addresses for fragment 1 are: (1<<32), (1<<32)+1, (1<<32)+2, (1<<32)+3
-//
-// Deletion is 0 index based. We delete the 0th and 1st row in fragment 0,
-// and the 1st and 2nd row in fragment 1,
-// Fragment 0: start = 2, length = 2 // covers rows 2, 3 in fragment 0
-// The row addresses for fragment 0 are: 2, 3
-// Fragment 1: start = 0, length = 4  // covers rows 0, 3 in fragment 1
-// The row addresses for fragment 1 are: (1<<32), (1<<32)+3
-/// Zone bound within a fragment
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ZoneBound {
-    pub fragment_id: u64,
-    // start is start row of the zone in the fragment, also known
-    // as the local offset. To get the actual first row address,
-    // use `(fragment_id << 32) | start`.
-    pub start: u64,
-    // length is the span of row offsets between the first and last row in the zone,
-    // calculated as (last_row_offset - first_row_offset + 1). It is not the count
-    // of physical rows, since deletions may create gaps within the span.
-    pub length: usize,
-}
+// Note: ZoneBound has been moved to lance_core::utils::zone::ZoneBound
+// and is re-exported here for compatibility
+pub use lance_core::utils::zone::ZoneBound;
 
 /// Index-specific logic used while building zones.
 pub trait ZoneProcessor {

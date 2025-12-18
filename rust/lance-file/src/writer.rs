@@ -12,6 +12,7 @@ use arrow_schema::DataType;
 use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
 use datafusion_common::ScalarValue;
 use datafusion_expr::Accumulator;
+use lance_core::utils::zone::ZoneBound;
 
 use arrow_data::ArrayData;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -116,24 +117,23 @@ struct ColumnZoneStatistics {
     max: ScalarValue,
     null_count: u32,
     nan_count: u32,
-    zone_start: u64,
-    zone_length: u64,
+    // TODO: add more stats like mean, avg_len and dist_cnt
+    bound: ZoneBound,
 }
 
-/// Statistics processor for a single column
+/// Statistics processor for a single column that implements ZoneProcessor trait
 struct ColumnStatisticsProcessor {
+    #[allow(dead_code)]
     data_type: DataType,
     min: MinAccumulator,
     max: MaxAccumulator,
     null_count: u32,
     nan_count: u32,
-    current_zone_rows: u64,
-    zone_start: u64,
-    zones: Vec<ColumnZoneStatistics>,
 }
 
 impl ColumnStatisticsProcessor {
-    fn new(data_type: DataType, zone_start: u64) -> Result<Self> {
+    fn new(data_type: DataType) -> Result<Self> {
+        // TODO: Does it handle all types?
         let min = MinAccumulator::try_new(&data_type)
             .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
         let max = MaxAccumulator::try_new(&data_type)
@@ -144,9 +144,6 @@ impl ColumnStatisticsProcessor {
             max,
             null_count: 0,
             nan_count: 0,
-            current_zone_rows: 0,
-            zone_start,
-            zones: Vec::new(),
         })
     }
 
@@ -176,9 +173,11 @@ impl ColumnStatisticsProcessor {
             _ => 0,
         }
     }
+}
 
-    fn process_chunk(&mut self, array: &ArrayRef, zone_size: u64) -> Result<()> {
-        let num_rows = array.len() as u64;
+/// Internal methods for ColumnStatisticsProcessor
+impl ColumnStatisticsProcessor {
+    fn process_chunk(&mut self, array: &ArrayRef) -> Result<()> {
         self.null_count += array.null_count() as u32;
         self.nan_count += Self::count_nans(array);
         self.min
@@ -187,41 +186,85 @@ impl ColumnStatisticsProcessor {
         self.max
             .update_batch(std::slice::from_ref(array))
             .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+        Ok(())
+    }
+
+    fn finish_zone(&mut self, bound: ZoneBound) -> Result<ColumnZoneStatistics> {
+        Ok(ColumnZoneStatistics {
+            min: self
+                .min
+                .evaluate()
+                .map_err(|e| Error::invalid_input(e.to_string(), location!()))?,
+            max: self
+                .max
+                .evaluate()
+                .map_err(|e| Error::invalid_input(e.to_string(), location!()))?,
+            null_count: self.null_count,
+            nan_count: self.nan_count,
+            bound,
+        })
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.min = MinAccumulator::try_new(&self.data_type)
+            .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+        self.max = MaxAccumulator::try_new(&self.data_type)
+            .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
+        self.null_count = 0;
+        self.nan_count = 0;
+        Ok(())
+    }
+}
+
+/// Wrapper to manage zone boundaries and statistics collection
+/// Follows the same pattern as ZoneProcessor/ZoneTrainer from lance-index
+struct ColumnStatsTracker {
+    processor: ColumnStatisticsProcessor,
+    zone_size: u64,
+    current_zone_rows: u64,
+    zone_start: u64,
+    zones: Vec<ColumnZoneStatistics>,
+}
+
+impl ColumnStatsTracker {
+    /// Zone size for column statistics (1 million rows per zone)
+    const ZONE_SIZE: u64 = 1_000_000;
+
+    fn new(data_type: DataType) -> Result<Self> {
+        Ok(Self {
+            processor: ColumnStatisticsProcessor::new(data_type)?,
+            zone_size: Self::ZONE_SIZE,
+            current_zone_rows: 0,
+            zone_start: 0,
+            zones: Vec::new(),
+        })
+    }
+
+    fn process_chunk(&mut self, array: &ArrayRef) -> Result<()> {
+        let num_rows = array.len() as u64;
+        self.processor.process_chunk(array)?;
         self.current_zone_rows += num_rows;
 
         // If zone is full, finalize it and start a new one
-        if self.current_zone_rows >= zone_size {
-            self.finish_zone()?;
+        if self.current_zone_rows >= self.zone_size {
+            self.flush_zone()?;
         }
 
         Ok(())
     }
 
-    fn finish_zone(&mut self) -> Result<()> {
+    fn flush_zone(&mut self) -> Result<()> {
         if self.current_zone_rows > 0 {
-            let stats = ColumnZoneStatistics {
-                min: self
-                    .min
-                    .evaluate()
-                    .map_err(|e| Error::invalid_input(e.to_string(), location!()))?,
-                max: self
-                    .max
-                    .evaluate()
-                    .map_err(|e| Error::invalid_input(e.to_string(), location!()))?,
-                null_count: self.null_count,
-                nan_count: self.nan_count,
-                zone_start: self.zone_start,
-                zone_length: self.current_zone_rows,
+            let bound = ZoneBound {
+                fragment_id: 0, // File-level statistics use fragment_id = 0
+                start: self.zone_start,
+                length: self.current_zone_rows as usize,
             };
+            let stats = self.processor.finish_zone(bound)?;
             self.zones.push(stats);
 
             // Reset for next zone
-            self.min = MinAccumulator::try_new(&self.data_type)
-                .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
-            self.max = MaxAccumulator::try_new(&self.data_type)
-                .map_err(|e| Error::invalid_input(e.to_string(), location!()))?;
-            self.null_count = 0;
-            self.nan_count = 0;
+            self.processor.reset()?;
             self.zone_start += self.current_zone_rows;
             self.current_zone_rows = 0;
         }
@@ -230,7 +273,7 @@ impl ColumnStatisticsProcessor {
 
     fn finalize(&mut self) -> Result<Vec<ColumnZoneStatistics>> {
         // Finish the last zone if it has data
-        self.finish_zone()?;
+        self.flush_zone()?;
         Ok(std::mem::take(&mut self.zones))
     }
 }
@@ -247,7 +290,7 @@ pub struct FileWriter {
     schema_metadata: HashMap<String, String>,
     options: FileWriterOptions,
     /// Column statistics processors (one per column), only initialized if enable_column_stats is true
-    column_stats_processors: Option<Vec<ColumnStatisticsProcessor>>,
+    column_stats_processors: Option<Vec<ColumnStatsTracker>>,
 }
 
 fn initial_column_metadata() -> pbfile::ColumnMetadata {
@@ -474,7 +517,7 @@ impl FileWriter {
             let mut processors = Vec::new();
             for field in &self.schema.as_ref().unwrap().fields {
                 let data_type = field.data_type().clone();
-                processors.push(ColumnStatisticsProcessor::new(data_type, 0)?);
+                processors.push(ColumnStatsTracker::new(data_type)?);
             }
             self.column_stats_processors = Some(processors);
         }
@@ -575,7 +618,6 @@ impl FileWriter {
 
         // Accumulate column statistics if enabled
         if let Some(ref mut processors) = self.column_stats_processors {
-            const ZONE_SIZE: u64 = 1_000_000; // 1 million rows per zone
             for (field, processor) in self
                 .schema
                 .as_ref()
@@ -585,7 +627,7 @@ impl FileWriter {
                 .zip(processors.iter_mut())
             {
                 if let Some(array) = batch.column_by_name(&field.name) {
-                    processor.process_chunk(array, ZONE_SIZE)?;
+                    processor.process_chunk(array)?;
                 }
             }
         }
@@ -876,14 +918,14 @@ impl FileWriter {
                         zone.nan_count.to_string(),
                     );
 
-                    // Store zone_start and zone_length
+                    // Store zone bound (start and length)
                     self.schema_metadata.insert(
                         format!("{}:zone_start", zone_prefix),
-                        zone.zone_start.to_string(),
+                        zone.bound.start.to_string(),
                     );
                     self.schema_metadata.insert(
                         format!("{}:zone_length", zone_prefix),
-                        zone.zone_length.to_string(),
+                        zone.bound.length.to_string(),
                     );
                 }
             }
