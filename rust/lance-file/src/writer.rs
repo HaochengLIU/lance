@@ -12,7 +12,7 @@ use arrow_schema::DataType;
 use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
 use datafusion_common::ScalarValue;
 use datafusion_expr::Accumulator;
-use lance_core::utils::zone::ZoneBound;
+use lance_core::utils::zone::{ZoneBound, ZoneProcessor};
 
 use arrow_data::ArrayData;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -175,8 +175,10 @@ impl ColumnStatisticsProcessor {
     }
 }
 
-/// Internal methods for ColumnStatisticsProcessor
-impl ColumnStatisticsProcessor {
+/// Implement ZoneProcessor trait for ColumnStatisticsProcessor
+impl ZoneProcessor for ColumnStatisticsProcessor {
+    type ZoneStatistics = ColumnZoneStatistics;
+
     fn process_chunk(&mut self, array: &ArrayRef) -> Result<()> {
         self.null_count += array.null_count() as u32;
         self.nan_count += Self::count_nans(array);
@@ -189,7 +191,7 @@ impl ColumnStatisticsProcessor {
         Ok(())
     }
 
-    fn finish_zone(&mut self, bound: ZoneBound) -> Result<ColumnZoneStatistics> {
+    fn finish_zone(&mut self, bound: ZoneBound) -> Result<Self::ZoneStatistics> {
         Ok(ColumnZoneStatistics {
             min: self
                 .min

@@ -7,7 +7,7 @@
 //! It handles chunking data streams into fixed-size zones while respecting fragment
 //! boundaries and computing zone bounds that remain valid after row deletions.
 
-use arrow_array::{ArrayRef, UInt64Array};
+use arrow_array::UInt64Array;
 use datafusion::execution::SendableRecordBatchStream;
 use futures::TryStreamExt;
 use lance_core::error::Error;
@@ -17,23 +17,9 @@ use lance_core::{Result, ROW_ADDR};
 use lance_datafusion::chunker::chunk_concat_stream;
 use snafu::location;
 
-// Note: ZoneBound has been moved to lance_core::utils::zone::ZoneBound
-// and is re-exported here for compatibility
-pub use lance_core::utils::zone::ZoneBound;
-
-/// Index-specific logic used while building zones.
-pub trait ZoneProcessor {
-    type ZoneStatistics;
-
-    /// Process a slice of values that belongs to the current zone.
-    fn process_chunk(&mut self, values: &ArrayRef) -> Result<()>;
-
-    /// Emit statistics when the zone is full or the fragment changes.
-    fn finish_zone(&mut self, bound: ZoneBound) -> Result<Self::ZoneStatistics>;
-
-    /// Reset state so the processor can handle the next zone.
-    fn reset(&mut self) -> Result<()>;
-}
+// Note: ZoneBound and ZoneProcessor have been moved to lance_core::utils::zone
+// and are re-exported here for compatibility
+pub use lance_core::utils::zone::{ZoneBound, ZoneProcessor};
 
 /// Trainer that handles chunking, fragment boundaries, and zone flushing.
 #[derive(Debug)]
