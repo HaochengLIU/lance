@@ -12,7 +12,7 @@ use arrow_schema::DataType;
 use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
 use datafusion_common::ScalarValue;
 use datafusion_expr::Accumulator;
-use lance_core::utils::zone::{ZoneBound, ZoneProcessor};
+use lance_core::utils::zone::{ZoneBound, ZoneProcessor, ZoneTracker};
 
 use arrow_data::ArrayData;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -218,67 +218,8 @@ impl ZoneProcessor for ColumnStatisticsProcessor {
     }
 }
 
-/// Wrapper to manage zone boundaries and statistics collection
-/// Follows the same pattern as ZoneProcessor/ZoneTrainer from lance-index
-struct ColumnStatsTracker {
-    processor: ColumnStatisticsProcessor,
-    zone_size: u64,
-    current_zone_rows: u64,
-    zone_start: u64,
-    zones: Vec<ColumnZoneStatistics>,
-}
-
-impl ColumnStatsTracker {
-    /// Zone size for column statistics (1 million rows per zone)
-    const ZONE_SIZE: u64 = 1_000_000;
-
-    fn new(data_type: DataType) -> Result<Self> {
-        Ok(Self {
-            processor: ColumnStatisticsProcessor::new(data_type)?,
-            zone_size: Self::ZONE_SIZE,
-            current_zone_rows: 0,
-            zone_start: 0,
-            zones: Vec::new(),
-        })
-    }
-
-    fn process_chunk(&mut self, array: &ArrayRef) -> Result<()> {
-        let num_rows = array.len() as u64;
-        self.processor.process_chunk(array)?;
-        self.current_zone_rows += num_rows;
-
-        // If zone is full, finalize it and start a new one
-        if self.current_zone_rows >= self.zone_size {
-            self.flush_zone()?;
-        }
-
-        Ok(())
-    }
-
-    fn flush_zone(&mut self) -> Result<()> {
-        if self.current_zone_rows > 0 {
-            let bound = ZoneBound {
-                fragment_id: 0, // File-level statistics use fragment_id = 0
-                start: self.zone_start,
-                length: self.current_zone_rows as usize,
-            };
-            let stats = self.processor.finish_zone(bound)?;
-            self.zones.push(stats);
-
-            // Reset for next zone
-            self.processor.reset()?;
-            self.zone_start += self.current_zone_rows;
-            self.current_zone_rows = 0;
-        }
-        Ok(())
-    }
-
-    fn finalize(&mut self) -> Result<Vec<ColumnZoneStatistics>> {
-        // Finish the last zone if it has data
-        self.flush_zone()?;
-        Ok(std::mem::take(&mut self.zones))
-    }
-}
+/// Zone size for column statistics (1 million rows per zone)
+const COLUMN_STATS_ZONE_SIZE: u64 = 1_000_000;
 
 pub struct FileWriter {
     writer: ObjectWriter,
@@ -292,7 +233,7 @@ pub struct FileWriter {
     schema_metadata: HashMap<String, String>,
     options: FileWriterOptions,
     /// Column statistics processors (one per column), only initialized if enable_column_stats is true
-    column_stats_processors: Option<Vec<ColumnStatsTracker>>,
+    column_stats_processors: Option<Vec<ZoneTracker<ColumnStatisticsProcessor>>>,
 }
 
 fn initial_column_metadata() -> pbfile::ColumnMetadata {
@@ -519,7 +460,8 @@ impl FileWriter {
             let mut processors = Vec::new();
             for field in &self.schema.as_ref().unwrap().fields {
                 let data_type = field.data_type().clone();
-                processors.push(ColumnStatsTracker::new(data_type)?);
+                let processor = ColumnStatisticsProcessor::new(data_type)?;
+                processors.push(ZoneTracker::new(processor, COLUMN_STATS_ZONE_SIZE)?);
             }
             self.column_stats_processors = Some(processors);
         }
@@ -874,7 +816,7 @@ impl FileWriter {
 
         // Finalize statistics for all columns
         let mut all_column_stats = Vec::new();
-        for (field, mut processor) in schema.fields.iter().zip(processors.into_iter()) {
+        for (field, processor) in schema.fields.iter().zip(processors.into_iter()) {
             let zones = processor.finalize()?;
             all_column_stats.push((field.name.clone(), zones));
         }

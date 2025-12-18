@@ -17,9 +17,9 @@ use lance_core::{Result, ROW_ADDR};
 use lance_datafusion::chunker::chunk_concat_stream;
 use snafu::location;
 
-// Note: ZoneBound and ZoneProcessor have been moved to lance_core::utils::zone
+// Note: ZoneBound, ZoneProcessor, and ZoneTracker have been moved to lance_core::utils::zone
 // and are re-exported here for compatibility
-pub use lance_core::utils::zone::{ZoneBound, ZoneProcessor};
+pub use lance_core::utils::zone::{ZoneBound, ZoneProcessor, ZoneTracker};
 
 /// Trainer that handles chunking, fragment boundaries, and zone flushing.
 #[derive(Debug)]

@@ -67,3 +67,131 @@ pub trait ZoneProcessor {
     /// the next zone's data.
     fn reset(&mut self) -> Result<()>;
 }
+
+/// Generic zone tracker that manages zone boundaries and statistics collection.
+///
+/// This wrapper handles the mechanics of zone management (tracking row counts,
+/// flushing zones when full) while delegating the actual statistics computation
+/// to a `ZoneProcessor` implementation.
+///
+/// This is useful for synchronous, batch-based zone processing (e.g., during
+/// file writing). For async stream-based processing with fragment boundaries,
+/// see `ZoneTrainer` in `lance-index`.
+///
+/// # Example
+///
+/// ```ignore
+/// let processor = MyZoneProcessor::new(data_type)?;
+/// let mut tracker = ZoneTracker::new(processor, 1_000_000)?;
+///
+/// for batch in batches {
+///     for field in batch.columns() {
+///         tracker.process_chunk(field)?;
+///     }
+/// }
+///
+/// let all_zones = tracker.finalize()?;
+/// ```
+pub struct ZoneTracker<P: ZoneProcessor> {
+    processor: P,
+    zone_size: u64,
+    current_zone_rows: u64,
+    zone_start: u64,
+    fragment_id: u64,
+    zones: Vec<P::ZoneStatistics>,
+}
+
+impl<P: ZoneProcessor> ZoneTracker<P> {
+    /// Create a new zone tracker with the given processor and zone size.
+    ///
+    /// # Arguments
+    ///
+    /// * `processor` - The zone processor that computes statistics
+    /// * `zone_size` - Maximum number of rows per zone
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `zone_size` is 0.
+    pub fn new(processor: P, zone_size: u64) -> Result<Self> {
+        if zone_size == 0 {
+            return Err(crate::Error::invalid_input(
+                "zone size must be greater than zero",
+                snafu::location!(),
+            ));
+        }
+        Ok(Self {
+            processor,
+            zone_size,
+            current_zone_rows: 0,
+            zone_start: 0,
+            fragment_id: 0,
+            zones: Vec::new(),
+        })
+    }
+
+    /// Create a new zone tracker with a specific fragment ID.
+    ///
+    /// This is useful when you know the fragment ID upfront (e.g., when
+    /// processing data that already belongs to a specific fragment).
+    pub fn with_fragment_id(processor: P, zone_size: u64, fragment_id: u64) -> Result<Self> {
+        let mut tracker = Self::new(processor, zone_size)?;
+        tracker.fragment_id = fragment_id;
+        Ok(tracker)
+    }
+
+    /// Process a chunk of data, automatically flushing zones when full.
+    ///
+    /// This method delegates to the underlying processor's `process_chunk`
+    /// and manages zone boundaries automatically.
+    pub fn process_chunk(&mut self, array: &ArrayRef) -> Result<()> {
+        let num_rows = array.len() as u64;
+        self.processor.process_chunk(array)?;
+        self.current_zone_rows += num_rows;
+
+        // If zone is full, finalize it and start a new one
+        if self.current_zone_rows >= self.zone_size {
+            self.flush_zone()?;
+        }
+
+        Ok(())
+    }
+
+    /// Flush the current zone if it has any data.
+    ///
+    /// This creates a `ZoneBound` for the current zone, calls the processor's
+    /// `finish_zone`, and resets for the next zone.
+    fn flush_zone(&mut self) -> Result<()> {
+        if self.current_zone_rows > 0 {
+            let bound = ZoneBound {
+                fragment_id: self.fragment_id,
+                start: self.zone_start,
+                length: self.current_zone_rows as usize,
+            };
+            let stats = self.processor.finish_zone(bound)?;
+            self.zones.push(stats);
+
+            // Reset for next zone
+            self.processor.reset()?;
+            self.zone_start += self.current_zone_rows;
+            self.current_zone_rows = 0;
+        }
+        Ok(())
+    }
+
+    /// Finalize processing and return all collected zone statistics.
+    ///
+    /// This flushes any remaining partial zone and returns ownership of
+    /// all zone statistics.
+    pub fn finalize(mut self) -> Result<Vec<P::ZoneStatistics>> {
+        self.flush_zone()?;
+        Ok(self.zones)
+    }
+
+    /// Get a reference to the collected zone statistics so far.
+    ///
+    /// Note: This does not include the current partial zone. Call `flush_zone()`
+    /// first if you want to include it.
+    pub fn zones(&self) -> &[P::ZoneStatistics] {
+        &self.zones
+    }
+}
