@@ -12,7 +12,7 @@ use arrow_schema::DataType;
 use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
 use datafusion_common::ScalarValue;
 use datafusion_expr::Accumulator;
-use lance_core::utils::zone::{ZoneBound, ZoneProcessor, ZoneTracker};
+use lance_core::utils::zone::{FileZoneBuilder, ZoneBound, ZoneProcessor};
 
 use arrow_data::ArrayData;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -233,7 +233,7 @@ pub struct FileWriter {
     schema_metadata: HashMap<String, String>,
     options: FileWriterOptions,
     /// Column statistics processors (one per column), only initialized if enable_column_stats is true
-    column_stats_processors: Option<Vec<ZoneTracker<ColumnStatisticsProcessor>>>,
+    column_stats_processors: Option<Vec<FileZoneBuilder<ColumnStatisticsProcessor>>>,
 }
 
 fn initial_column_metadata() -> pbfile::ColumnMetadata {
@@ -461,7 +461,7 @@ impl FileWriter {
             for field in &self.schema.as_ref().unwrap().fields {
                 let data_type = field.data_type().clone();
                 let processor = ColumnStatisticsProcessor::new(data_type)?;
-                processors.push(ZoneTracker::new(processor, COLUMN_STATS_ZONE_SIZE)?);
+                processors.push(FileZoneBuilder::new(processor, COLUMN_STATS_ZONE_SIZE)?);
             }
             self.column_stats_processors = Some(processors);
         }

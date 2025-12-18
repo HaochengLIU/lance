@@ -44,7 +44,9 @@ use lance_core::Result;
 use roaring::RoaringBitmap;
 use snafu::location;
 
-use super::zoned::{rebuild_zones, search_zones, ZoneBound, ZoneProcessor, ZoneTrainer};
+use super::zone_trainer::{
+    rebuild_zones, search_zones, IndexZoneTrainer, ZoneBound, ZoneProcessor,
+};
 const ROWS_PER_ZONE_DEFAULT: u64 = 8192; // 1 zone every two batches
 
 const ZONEMAP_FILENAME: &str = "zonemap.lance";
@@ -572,7 +574,7 @@ impl ScalarIndex for ZoneMapIndex {
 
         let options = ZoneMapIndexBuilderParams::new(self.rows_per_zone);
         let processor = ZoneMapProcessor::new(value_type.clone())?;
-        let trainer = ZoneTrainer::new(processor, self.rows_per_zone)?;
+        let trainer = IndexZoneTrainer::new(processor, self.rows_per_zone)?;
         let updated_zones = rebuild_zones(&self.zones, trainer, new_data).await?;
 
         // Serialize the combined zones back into the index file
@@ -657,7 +659,7 @@ impl ZoneMapIndexBuilder {
     /// by the scalar index registry.
     pub async fn train(&mut self, batches_source: SendableRecordBatchStream) -> Result<()> {
         let processor = ZoneMapProcessor::new(self.items_type.clone())?;
-        let trainer = ZoneTrainer::new(processor, self.options.rows_per_zone)?;
+        let trainer = IndexZoneTrainer::new(processor, self.options.rows_per_zone)?;
         self.maps = trainer.train(batches_source).await?;
         Ok(())
     }
@@ -938,7 +940,7 @@ mod tests {
     use crate::scalar::{zonemap::ROWS_PER_ZONE_DEFAULT, IndexStore};
     use std::sync::Arc;
 
-    use crate::scalar::zoned::ZoneBound;
+    use crate::scalar::zone_trainer::ZoneBound;
     use crate::scalar::zonemap::{ZoneMapIndexPlugin, ZoneMapStatistics};
     use arrow::datatypes::Float32Type;
     use arrow_array::{record_batch, Array, RecordBatch, UInt64Array};

@@ -38,7 +38,7 @@ pub mod label_list;
 pub mod lance_format;
 pub mod ngram;
 pub mod registry;
-pub mod zoned;
+pub mod zone_trainer;
 pub mod zonemap;
 
 use crate::frag_reuse::FragReuseIndex;

@@ -68,31 +68,43 @@ pub trait ZoneProcessor {
     fn reset(&mut self) -> Result<()>;
 }
 
-/// Generic zone tracker that manages zone boundaries and statistics collection.
+/// Builds zones from batches during file writing.
 ///
-/// This wrapper handles the mechanics of zone management (tracking row counts,
-/// flushing zones when full) while delegating the actual statistics computation
-/// to a `ZoneProcessor` implementation.
+/// `FileZoneBuilder` manages zone boundaries and statistics collection for file-level
+/// operations. It processes data synchronously in batches without requiring row addresses,
+/// making it ideal for writing new data files.
 ///
-/// This is useful for synchronous, batch-based zone processing (e.g., during
-/// file writing). For async stream-based processing with fragment boundaries,
-/// see `ZoneTrainer` in `lance-index`.
+/// This builder handles the mechanics of zone management (tracking row counts, flushing
+/// zones when full) while delegating statistics computation to a `ZoneProcessor` implementation.
+///
+/// # Use Cases
+///
+/// - Writing Lance data files with column statistics
+/// - In-memory zone processing for fresh data
+/// - Any synchronous, batch-based zone building
+///
+/// # Contrast with `IndexZoneTrainer`
+///
+/// For building zones from existing data with row addresses across multiple fragments,
+/// use `IndexZoneTrainer` in `lance-index` instead.
 ///
 /// # Example
 ///
 /// ```ignore
+/// use lance_core::utils::zone::{FileZoneBuilder, ZoneProcessor};
+///
 /// let processor = MyZoneProcessor::new(data_type)?;
-/// let mut tracker = ZoneTracker::new(processor, 1_000_000)?;
+/// let mut builder = FileZoneBuilder::new(processor, 1_000_000)?;
 ///
 /// for batch in batches {
 ///     for field in batch.columns() {
-///         tracker.process_chunk(field)?;
+///         builder.process_chunk(field)?;
 ///     }
 /// }
 ///
-/// let all_zones = tracker.finalize()?;
+/// let all_zones = builder.finalize()?;
 /// ```
-pub struct ZoneTracker<P: ZoneProcessor> {
+pub struct FileZoneBuilder<P: ZoneProcessor> {
     processor: P,
     zone_size: u64,
     current_zone_rows: u64,
@@ -101,13 +113,13 @@ pub struct ZoneTracker<P: ZoneProcessor> {
     zones: Vec<P::ZoneStatistics>,
 }
 
-impl<P: ZoneProcessor> ZoneTracker<P> {
-    /// Create a new zone tracker with the given processor and zone size.
+impl<P: ZoneProcessor> FileZoneBuilder<P> {
+    /// Creates a new file zone builder.
     ///
     /// # Arguments
     ///
     /// * `processor` - The zone processor that computes statistics
-    /// * `zone_size` - Maximum number of rows per zone
+    /// * `zone_size` - Maximum number of rows per zone (e.g., 1,000,000)
     ///
     /// # Errors
     ///
@@ -129,20 +141,15 @@ impl<P: ZoneProcessor> ZoneTracker<P> {
         })
     }
 
-    /// Create a new zone tracker with a specific fragment ID.
+    /// Processes a chunk of data, automatically flushing zones when full.
     ///
-    /// This is useful when you know the fragment ID upfront (e.g., when
-    /// processing data that already belongs to a specific fragment).
-    pub fn with_fragment_id(processor: P, zone_size: u64, fragment_id: u64) -> Result<Self> {
-        let mut tracker = Self::new(processor, zone_size)?;
-        tracker.fragment_id = fragment_id;
-        Ok(tracker)
-    }
-
-    /// Process a chunk of data, automatically flushing zones when full.
+    /// This method accumulates data into the current zone and automatically flushes
+    /// when the zone reaches capacity. The underlying processor's `process_chunk`
+    /// is called for statistics computation.
     ///
-    /// This method delegates to the underlying processor's `process_chunk`
-    /// and manages zone boundaries automatically.
+    /// # Arguments
+    ///
+    /// * `array` - The array of values to process
     pub fn process_chunk(&mut self, array: &ArrayRef) -> Result<()> {
         let num_rows = array.len() as u64;
         self.processor.process_chunk(array)?;
@@ -156,10 +163,11 @@ impl<P: ZoneProcessor> ZoneTracker<P> {
         Ok(())
     }
 
-    /// Flush the current zone if it has any data.
+    /// Flushes the current zone if it contains any data.
     ///
-    /// This creates a `ZoneBound` for the current zone, calls the processor's
-    /// `finish_zone`, and resets for the next zone.
+    /// Creates a `ZoneBound` with the current zone's position and length,
+    /// calls the processor's `finish_zone` to compute final statistics,
+    /// and resets state for the next zone.
     fn flush_zone(&mut self) -> Result<()> {
         if self.current_zone_rows > 0 {
             let bound = ZoneBound {
@@ -178,19 +186,18 @@ impl<P: ZoneProcessor> ZoneTracker<P> {
         Ok(())
     }
 
-    /// Finalize processing and return all collected zone statistics.
+    /// Finalizes processing and returns all collected zone statistics.
     ///
-    /// This flushes any remaining partial zone and returns ownership of
-    /// all zone statistics.
+    /// Flushes any remaining partial zone and consumes the builder,
+    /// returning ownership of all zone statistics collected during processing.
     pub fn finalize(mut self) -> Result<Vec<P::ZoneStatistics>> {
         self.flush_zone()?;
         Ok(self.zones)
     }
 
-    /// Get a reference to the collected zone statistics so far.
+    /// Returns a reference to the collected zone statistics so far.
     ///
-    /// Note: This does not include the current partial zone. Call `flush_zone()`
-    /// first if you want to include it.
+    /// Note: This does not include the current partial zone being accumulated.
     pub fn zones(&self) -> &[P::ZoneStatistics] {
         &self.zones
     }

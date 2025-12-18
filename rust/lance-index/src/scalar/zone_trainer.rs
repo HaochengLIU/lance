@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright The Lance Authors
 
-//! Shared Zone Training Utilities
+//! Index Zone Training Utilities
 //!
-//! This module provides common infrastructure for building zone-based scalar indexes.
-//! It handles chunking data streams into fixed-size zones while respecting fragment
-//! boundaries and computing zone bounds that remain valid after row deletions.
+//! This module provides async infrastructure for building zone-based scalar indexes from
+//! existing dataset data. It processes streams with row addresses (`_rowaddr` column),
+//! handles multiple fragments, respects fragment boundaries, and computes zone bounds
+//! that remain valid after row deletions.
+//!
+//! # Main Components
+//!
+//! - **`IndexZoneTrainer`**: Async trainer that processes `SendableRecordBatchStream` with
+//!   `_rowaddr` columns to build zones across multiple fragments
+//! - **Helper functions**: `search_zones()`, `rebuild_zones()` for common index operations
+//!
+//! # Contrast with `FileZoneBuilder`
+//!
+//! For synchronous, batch-based zone building during file writing (without row addresses),
+//! use `FileZoneBuilder` in `lance_core::utils::zone` instead.
 
 use arrow_array::UInt64Array;
 use datafusion::execution::SendableRecordBatchStream;
@@ -17,22 +29,44 @@ use lance_core::{Result, ROW_ADDR};
 use lance_datafusion::chunker::chunk_concat_stream;
 use snafu::location;
 
-// Note: ZoneBound, ZoneProcessor, and ZoneTracker have been moved to lance_core::utils::zone
-// and are re-exported here for compatibility
-pub use lance_core::utils::zone::{ZoneBound, ZoneProcessor, ZoneTracker};
+// Note: Core zone types have been moved to lance_core::utils::zone and are re-exported here
+pub use lance_core::utils::zone::{FileZoneBuilder, ZoneBound, ZoneProcessor};
 
-/// Trainer that handles chunking, fragment boundaries, and zone flushing.
+/// Trains zones from dataset streams for index building.
+///
+/// `IndexZoneTrainer` processes async streams of data with row addresses to build zones
+/// for scalar indexes. Unlike `FileZoneBuilder`, it handles:
+///
+/// - Multiple fragments with automatic boundary detection
+/// - Row addresses (`_rowaddr` column) for tracking data location
+/// - Non-contiguous row offsets from deletions
+/// - Async stream processing
+///
+/// # Example
+///
+/// ```ignore
+/// use lance_index::scalar::zone_trainer::{IndexZoneTrainer, ZoneProcessor};
+///
+/// let processor = MyZoneProcessor::new(data_type)?;
+/// let trainer = IndexZoneTrainer::new(processor, 1_000_000)?;
+/// let zones = trainer.train(stream_with_rowaddr).await?;
+/// ```
 #[derive(Debug)]
-pub struct ZoneTrainer<P> {
+pub struct IndexZoneTrainer<P> {
     processor: P,
     zone_capacity: u64,
 }
 
-impl<P> ZoneTrainer<P>
+impl<P> IndexZoneTrainer<P>
 where
     P: ZoneProcessor,
 {
-    /// Create a new trainer that buffers at most `zone_capacity` rows per zone.
+    /// Creates a new index zone trainer.
+    ///
+    /// # Arguments
+    ///
+    /// * `processor` - The zone processor that computes statistics
+    /// * `zone_capacity` - Maximum number of rows per zone (e.g., 1,000,000)
     pub fn new(processor: P, zone_capacity: u64) -> Result<Self> {
         if zone_capacity == 0 {
             return Err(Error::invalid_input(
@@ -46,14 +80,20 @@ where
         })
     }
 
-    /// Consume the `_rowaddr`-annotated stream, split it into zones, and let the
-    /// processor compute zone statistics.
+    /// Trains zones from a stream with row addresses.
     ///
-    /// The caller must provide record batches where the first column is the
-    /// value array that the zone processor understands, and the schema includes
-    /// the `_rowaddr` column with physical row addresses. Future zone-based
-    /// indexes should maintain this ordering or extend the trainer to accept an
-    /// explicit column index.
+    /// Processes the stream, automatically detecting fragment boundaries and handling
+    /// deletions (non-contiguous row offsets). Returns zone statistics for all processed data.
+    ///
+    /// # Requirements
+    ///
+    /// - First column: Values to process (type depends on processor)
+    /// - Must include `_rowaddr` column with physical row addresses
+    /// - Row addresses encode fragment ID in upper 32 bits: `(fragment_id << 32) | local_offset`
+    ///
+    /// # Arguments
+    ///
+    /// * `stream` - Async stream of record batches with `_rowaddr` column
     pub async fn train(
         mut self,
         stream: SendableRecordBatchStream,
@@ -204,10 +244,18 @@ where
     }
 }
 
-/// Shared search helper that loops over zones, records metrics, and
-/// collects row address ranges for matching zones. The result is always
-/// returned as `SearchResult::AtMost` because zone-level pruning can only
-/// guarantee a superset of the true matches.
+/// Searches zones and returns matching row address ranges.
+///
+/// This helper evaluates a predicate against each zone and collects row address
+/// ranges for zones that might contain matching values. The result is always
+/// `SearchResult::AtMost` because zone-level pruning can only guarantee a superset
+/// of true matches (false positives possible, but no false negatives).
+///
+/// # Arguments
+///
+/// * `zones` - Slice of zone statistics to search
+/// * `metrics` - Metrics collector for recording comparisons
+/// * `zone_matches` - Predicate function that returns true if a zone might match
 pub fn search_zones<T, F>(
     zones: &[T],
     metrics: &dyn crate::metrics::MetricsCollector,
@@ -236,12 +284,19 @@ where
     Ok(crate::scalar::SearchResult::at_most(row_addr_tree_map))
 }
 
-/// Helper that retrains zones from `stream` and appends them to the existing
-/// statistics. Useful for index update paths that need to merge new fragments
-/// into an existing zone list.
+/// Rebuilds zones by training on new data and appending to existing zones.
+///
+/// This helper is useful for index update operations that need to merge new fragments
+/// into an existing zone list without reprocessing old data.
+///
+/// # Arguments
+///
+/// * `existing` - Existing zone statistics to preserve
+/// * `trainer` - Index zone trainer to process new data
+/// * `stream` - Stream of new data with `_rowaddr` column
 pub async fn rebuild_zones<P>(
     existing: &[P::ZoneStatistics],
-    trainer: ZoneTrainer<P>,
+    trainer: IndexZoneTrainer<P>,
     stream: SendableRecordBatchStream,
 ) -> Result<Vec<P::ZoneStatistics>>
 where
@@ -332,7 +387,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 4).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 4).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // Three zones: offsets [0..=3], [4..=7], [8..=9]
@@ -363,7 +418,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 10).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 10).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // Two zones, one per fragment (capacity=10 is large enough)
@@ -388,7 +443,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 10).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 10).unwrap();
         let err = trainer.train(stream).await.unwrap_err();
         assert!(
             format!("{}", err).contains("zone row offsets are out of order"),
@@ -417,7 +472,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 10).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 10).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // One zone containing the 3 valid rows (empty batches skipped)
@@ -439,7 +494,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 1).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 1).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // Three zones, one per row (capacity=1)
@@ -464,7 +519,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 10000).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 10000).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // One zone containing all 100 rows (capacity is large enough)
@@ -477,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_zero_capacity() {
         let processor = MockProcessor::new();
-        let result = ZoneTrainer::new(processor, 0);
+        let result = IndexZoneTrainer::new(processor, 0);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -498,7 +553,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 4).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 4).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // Two zones: first 4 rows, then remaining 2 rows
@@ -529,7 +584,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 3).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 3).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // Three zones: frag 0 full zone, frag 0 partial (flushed at boundary), frag 1
@@ -570,7 +625,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 4).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 4).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // Should create 2 zones (capacity=4):
@@ -605,7 +660,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 10).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 10).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // One zone with 3 rows, but offset span [0..=200] so length=201 due to large gaps
@@ -631,7 +686,7 @@ mod tests {
         ));
 
         let processor = MockProcessor::new();
-        let trainer = ZoneTrainer::new(processor, 10).unwrap();
+        let trainer = IndexZoneTrainer::new(processor, 10).unwrap();
         let stats = trainer.train(stream).await.unwrap();
 
         // Should create 3 zones (one per fragment)
@@ -778,7 +833,7 @@ mod tests {
             stream::once(async { Ok(batch) }),
         ));
 
-        let trainer = ZoneTrainer::new(MockProcessor::new(), 2).unwrap();
+        let trainer = IndexZoneTrainer::new(MockProcessor::new(), 2).unwrap();
         let rebuilt = rebuild_zones(&existing, trainer, stream).await.unwrap();
         // Existing zone should remain unchanged and new stats appended afterwards
         assert_eq!(rebuilt.len(), 2);
@@ -808,7 +863,7 @@ mod tests {
             stream::once(async { Ok(batch) }),
         ));
 
-        let trainer = ZoneTrainer::new(MockProcessor::new(), 2).unwrap();
+        let trainer = IndexZoneTrainer::new(MockProcessor::new(), 2).unwrap();
         let rebuilt = rebuild_zones(&existing, trainer, stream).await.unwrap();
         // Existing zone plus two new fragments should yield three total zones
         assert_eq!(rebuilt.len(), 3);
