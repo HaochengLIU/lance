@@ -12,6 +12,13 @@ use arrow_array::ArrayRef;
 /// range of rows within a fragment. Zones are used for scalar indexing and
 /// column statistics.
 ///
+/// # Fragment ID
+///
+/// The `fragment_id` field is only meaningful when building zones from existing
+/// dataset data (e.g., for index building). When writing new files, this is
+/// typically set to 0 as a placeholder since the fragment ID is assigned later
+/// during commit.
+///
 /// # Example
 ///
 /// Suppose we have two fragments, each with 4 rows:
@@ -24,6 +31,9 @@ use arrow_array::ArrayRef;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ZoneBound {
     /// Fragment ID containing this zone
+    ///
+    /// For file-level operations (e.g., `FileZoneBuilder`), this is typically 0
+    /// since the fragment ID is assigned during commit, not during file writing.
     pub fragment_id: u64,
     /// Start row offset within the fragment (local offset)
     ///
@@ -109,7 +119,6 @@ pub struct FileZoneBuilder<P: ZoneProcessor> {
     zone_size: u64,
     current_zone_rows: u64,
     zone_start: u64,
-    fragment_id: u64,
     zones: Vec<P::ZoneStatistics>,
 }
 
@@ -136,7 +145,6 @@ impl<P: ZoneProcessor> FileZoneBuilder<P> {
             zone_size,
             current_zone_rows: 0,
             zone_start: 0,
-            fragment_id: 0,
             zones: Vec::new(),
         })
     }
@@ -171,7 +179,7 @@ impl<P: ZoneProcessor> FileZoneBuilder<P> {
     fn flush_zone(&mut self) -> Result<()> {
         if self.current_zone_rows > 0 {
             let bound = ZoneBound {
-                fragment_id: self.fragment_id,
+                fragment_id: 0, // Placeholder; actual fragment ID assigned during commit
                 start: self.zone_start,
                 length: self.current_zone_rows as usize,
             };

@@ -6,9 +6,8 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use arrow_array::ArrayRef;
-use arrow_array::RecordBatch;
-use arrow_schema::DataType;
+use arrow_array::{ArrayRef, RecordBatch, StringArray, UInt32Array, UInt64Array};
+use arrow_schema::{DataType, Field as ArrowField, Schema as ArrowSchema};
 use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
 use datafusion_common::ScalarValue;
 use datafusion_expr::Accumulator;
@@ -796,11 +795,21 @@ impl FileWriter {
 
     /// Build column statistics for the written data.
     ///
-    /// This method is called when `enable_column_stats` is true in the writer options.
-    /// The statistics can be used for query optimization and filtering.
+    /// Builds and stores column statistics if enabled.
     ///
-    /// Statistics are computed per column with zones of 1 million rows each, tracking
-    /// min, max, null_count, and nan_count for each zone.
+    /// Statistics are serialized as an Arrow RecordBatch and stored in a global buffer.
+    /// This format is forward/backward compatible - new statistics fields can be added
+    /// without breaking older readers.
+    ///
+    /// The RecordBatch schema:
+    /// - column_name: String - Name of the column
+    /// - zone_start: UInt64 - Starting row offset of the zone
+    /// - zone_length: UInt64 - Number of rows in the zone (span, not count)
+    /// - null_count: UInt32 - Number of null values
+    /// - nan_count: UInt32 - Number of NaN values (for float types)
+    /// - min: String - Minimum value (serialized as string for compatibility)
+    /// - max: String - Maximum value (serialized as string for compatibility)
+    /// - (future fields can be added here without breaking compatibility)
     async fn build_column_statistics(&mut self) -> Result<()> {
         let processors = match self.column_stats_processors.take() {
             Some(processors) => processors,
@@ -814,66 +823,105 @@ impl FileWriter {
             )
         })?;
 
-        // Finalize statistics for all columns
-        let mut all_column_stats = Vec::new();
+        // Collect all zone statistics from all columns
+        let mut column_names = Vec::new();
+        let mut zone_starts = Vec::new();
+        let mut zone_lengths = Vec::new();
+        let mut null_counts = Vec::new();
+        let mut nan_counts = Vec::new();
+        let mut mins = Vec::new();
+        let mut maxs = Vec::new();
+
         for (field, processor) in schema.fields.iter().zip(processors.into_iter()) {
             let zones = processor.finalize()?;
-            all_column_stats.push((field.name.clone(), zones));
-        }
 
-        // Store statistics in schema metadata for now
-        // In the future, this could be stored in a separate statistics section
-        for (column_name, zones) in all_column_stats {
-            if !zones.is_empty() {
-                // Store zone count in metadata
-                let zone_count_key = format!("lance:column_stats:{}:zone_count", column_name);
-                self.schema_metadata
-                    .insert(zone_count_key, zones.len().to_string());
-
-                // Store zone size (1 million) in metadata
-                let zone_size_key = format!("lance:column_stats:{}:zone_size", column_name);
-                self.schema_metadata
-                    .insert(zone_size_key, "1000000".to_string());
-
-                // For each zone, store min, max, null_count, nan_count
-                for (zone_idx, zone) in zones.iter().enumerate() {
-                    let zone_prefix =
-                        format!("lance:column_stats:{}:zone_{}", column_name, zone_idx);
-
-                    // Store min (as string representation)
-                    let min_str = format!("{:?}", zone.min);
-                    self.schema_metadata
-                        .insert(format!("{}:min", zone_prefix), min_str);
-
-                    // Store max (as string representation)
-                    let max_str = format!("{:?}", zone.max);
-                    self.schema_metadata
-                        .insert(format!("{}:max", zone_prefix), max_str);
-
-                    // Store null_count
-                    self.schema_metadata.insert(
-                        format!("{}:null_count", zone_prefix),
-                        zone.null_count.to_string(),
-                    );
-
-                    // Store nan_count
-                    self.schema_metadata.insert(
-                        format!("{}:nan_count", zone_prefix),
-                        zone.nan_count.to_string(),
-                    );
-
-                    // Store zone bound (start and length)
-                    self.schema_metadata.insert(
-                        format!("{}:zone_start", zone_prefix),
-                        zone.bound.start.to_string(),
-                    );
-                    self.schema_metadata.insert(
-                        format!("{}:zone_length", zone_prefix),
-                        zone.bound.length.to_string(),
-                    );
-                }
+            for zone in zones {
+                column_names.push(field.name.clone());
+                zone_starts.push(zone.bound.start);
+                zone_lengths.push(zone.bound.length as u64);
+                null_counts.push(zone.null_count);
+                nan_counts.push(zone.nan_count);
+                // Serialize ScalarValue as string for forward compatibility
+                mins.push(format!("{:?}", zone.min));
+                maxs.push(format!("{:?}", zone.max));
             }
         }
+
+        // If no statistics were collected, return early
+        if column_names.is_empty() {
+            return Ok(());
+        }
+
+        // Create Arrow arrays
+        let column_name_array = Arc::new(StringArray::from(column_names)) as ArrayRef;
+        let zone_start_array = Arc::new(UInt64Array::from(zone_starts)) as ArrayRef;
+        let zone_length_array = Arc::new(UInt64Array::from(zone_lengths)) as ArrayRef;
+        let null_count_array = Arc::new(UInt32Array::from(null_counts)) as ArrayRef;
+        let nan_count_array = Arc::new(UInt32Array::from(nan_counts)) as ArrayRef;
+        let min_array = Arc::new(StringArray::from(mins)) as ArrayRef;
+        let max_array = Arc::new(StringArray::from(maxs)) as ArrayRef;
+
+        // Create schema for the statistics RecordBatch
+        let stats_schema = Arc::new(ArrowSchema::new(vec![
+            ArrowField::new("column_name", DataType::Utf8, false),
+            ArrowField::new("zone_start", DataType::UInt64, false),
+            ArrowField::new("zone_length", DataType::UInt64, false),
+            ArrowField::new("null_count", DataType::UInt32, false),
+            ArrowField::new("nan_count", DataType::UInt32, false),
+            ArrowField::new("min", DataType::Utf8, false),
+            ArrowField::new("max", DataType::Utf8, false),
+        ]));
+
+        // Create RecordBatch
+        let stats_batch = RecordBatch::try_new(
+            stats_schema,
+            vec![
+                column_name_array,
+                zone_start_array,
+                zone_length_array,
+                null_count_array,
+                nan_count_array,
+                min_array,
+                max_array,
+            ],
+        )
+        .map_err(|e| {
+            Error::invalid_input(
+                format!("Failed to create statistics batch: {}", e),
+                location!(),
+            )
+        })?;
+
+        // Serialize to Arrow IPC format
+        let mut buffer = Vec::new();
+        {
+            let mut writer =
+                arrow_ipc::writer::FileWriter::try_new(&mut buffer, &stats_batch.schema())
+                    .map_err(|e| {
+                        Error::invalid_input(
+                            format!("Failed to create IPC writer: {}", e),
+                            location!(),
+                        )
+                    })?;
+            writer.write(&stats_batch).map_err(|e| {
+                Error::invalid_input(format!("Failed to write statistics: {}", e), location!())
+            })?;
+            writer.finish().map_err(|e| {
+                Error::invalid_input(format!("Failed to finish IPC writer: {}", e), location!())
+            })?;
+        }
+
+        // Store as global buffer
+        let buffer_bytes = Bytes::from(buffer);
+        let buffer_index = self.add_global_buffer(buffer_bytes).await?;
+
+        // Store the buffer index in schema metadata so readers can find it
+        self.schema_metadata.insert(
+            "lance:column_stats:buffer_index".to_string(),
+            buffer_index.to_string(),
+        );
+        self.schema_metadata
+            .insert("lance:column_stats:version".to_string(), "1".to_string());
 
         Ok(())
     }
