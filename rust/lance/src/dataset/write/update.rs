@@ -66,16 +66,27 @@ pub struct UpdateBuilder {
     conflict_retries: u32,
     /// Total timeout for retries.
     retry_timeout: Duration,
+    /// Whether to enable column statistics in the new fragments.
+    enable_column_stats: bool,
 }
 
 impl UpdateBuilder {
     pub fn new(dataset: Arc<Dataset>) -> Self {
+        // Check if column stats are enabled in dataset config
+        let enable_column_stats = dataset
+            .manifest
+            .config
+            .get("lance.column_stats.enabled")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false);
+
         Self {
             dataset,
             condition: None,
             updates: HashMap::new(),
             conflict_retries: 10,
             retry_timeout: Duration::from_secs(30),
+            enable_column_stats,
         }
     }
 
@@ -199,6 +210,15 @@ impl UpdateBuilder {
         self
     }
 
+    /// Enable or disable column statistics in the new fragments created by the update.
+    ///
+    /// By default, this is determined by the dataset's configuration
+    /// (`lance.column_stats.enabled`). Use this method to override that setting.
+    pub fn enable_column_stats(mut self, enable: bool) -> Self {
+        self.enable_column_stats = enable;
+        self
+    }
+
     // TODO: set write params
     // pub fn with_write_params(mut self, params: WriteParams) -> Self { ... }
 
@@ -224,6 +244,7 @@ impl UpdateBuilder {
             updates,
             conflict_retries: self.conflict_retries,
             retry_timeout: self.retry_timeout,
+            enable_column_stats: self.enable_column_stats,
         })
     }
 }
@@ -252,6 +273,7 @@ pub struct UpdateJob {
     updates: Arc<HashMap<String, Arc<dyn PhysicalExpr>>>,
     conflict_retries: u32,
     retry_timeout: Duration,
+    enable_column_stats: bool,
 }
 
 impl UpdateJob {
@@ -309,13 +331,18 @@ impl UpdateJob {
             .manifest()
             .data_storage_format
             .lance_file_version()?;
+        let write_params = WriteParams {
+            data_storage_version: Some(version),
+            enable_column_stats: self.enable_column_stats,
+            ..Default::default()
+        };
         let (mut new_fragments, _) = write_fragments_internal(
             Some(&self.dataset),
             self.dataset.object_store.clone(),
             &self.dataset.base,
             self.dataset.schema().clone(),
             Box::pin(stream),
-            WriteParams::with_storage_version(version),
+            write_params,
             None, // TODO: support multiple bases for update
         )
         .await?;
@@ -1347,6 +1374,98 @@ mod tests {
             assert!(fragment_id < 2,
                     "vec index bitmap should not contain fragments with unindexed data, found fragment {}",
                     fragment_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_with_column_stats() {
+        use arrow_array::{Int32Array, RecordBatchIterator, StringArray};
+        use arrow_schema::{DataType, Field, Schema as ArrowSchema};
+
+        // Create a simple dataset
+        let schema = Arc::new(ArrowSchema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("value", DataType::Utf8, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5])),
+                Arc::new(StringArray::from(vec!["a", "b", "c", "d", "e"])),
+            ],
+        )
+        .unwrap();
+
+        let batches = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+        let test_dir = lance_core::utils::tempfile::TempStrDir::default();
+        let test_uri = test_dir.to_string();
+
+        // Write initial dataset WITHOUT column stats
+        let dataset = crate::dataset::Dataset::write(
+            batches,
+            &test_uri,
+            Some(WriteParams {
+                enable_column_stats: false,
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap();
+
+        let initial_fragment_count = dataset.get_fragments().len();
+
+        // Update with column stats enabled
+        let updated_dataset = UpdateBuilder::new(Arc::new(dataset))
+            .update_where("id > 2")
+            .unwrap()
+            .set("value", "'updated'")
+            .unwrap()
+            .enable_column_stats(true)
+            .build()
+            .unwrap()
+            .execute()
+            .await
+            .unwrap()
+            .new_dataset;
+
+        // Verify update created new fragments
+        assert!(
+            updated_dataset.get_fragments().len() > initial_fragment_count,
+            "Update should create new fragments"
+        );
+
+        // Verify the update was applied
+        let updated_data = updated_dataset
+            .scan()
+            .project(&["id", "value"])
+            .unwrap()
+            .try_into_batch()
+            .await
+            .unwrap();
+
+        let ids = updated_data
+            .column_by_name("id")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let values = updated_data
+            .column_by_name("value")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        for i in 0..ids.len() {
+            if ids.value(i) > 2 {
+                assert_eq!(
+                    values.value(i),
+                    "updated",
+                    "Row with id {} should have updated value",
+                    ids.value(i)
+                );
+            }
         }
     }
 }
