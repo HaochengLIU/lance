@@ -1,0 +1,35 @@
+Metadata-Version: 2.4
+Name: lance-namespace
+Version: 0.0.20
+Summary: Python client for Lance Namespace API
+Author-email: LanceDB Devs <dev@lancedb.com>
+License: Apache-2.0
+Requires-Python: >=3.9
+Requires-Dist: lance-namespace-urllib3-client
+Requires-Dist: pyarrow>=14.0.0
+Requires-Dist: pylance>=0.18.0
+Requires-Dist: typing-extensions>=4.0.0
+Provides-Extra: dir
+Requires-Dist: opendal; extra == 'dir'
+Provides-Extra: glue
+Requires-Dist: boto3>=1.24.0; extra == 'glue'
+Requires-Dist: botocore>=1.27.0; extra == 'glue'
+Provides-Extra: hive2
+Requires-Dist: hive-metastore-client>=1.0.9; extra == 'hive2'
+Requires-Dist: thrift>=0.13.0; extra == 'hive2'
+Provides-Extra: test
+Requires-Dist: pytest-cov>=4.0.0; extra == 'test'
+Requires-Dist: pytest>=7.0.0; extra == 'test'
+Description-Content-Type: text/markdown
+
+# Lance Namespace
+
+**Lance Namespace** is an open specification on top of the storage-based Lance data format
+to standardize access to a collection of Lance tables (a.k.a. Lance datasets).
+It describes how a metadata service like Apache Hive MetaStore (HMS),
+Apache Gravitino, Unity Catalog, etc. should store and use Lance tables, 
+as well as how ML/AI tools and analytics compute engines should integrate with Lance tables.
+
+For more details, please visit the [documentation website](https://lancedb.github.io/lance/format/namespace).
+
+For development setup and contribution guidelines, please see [CONTRIBUTING.md](CONTRIBUTING.md).

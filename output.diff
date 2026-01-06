@@ -1,0 +1,167 @@
+diff --git a/rust/lance-encoding/src/compression_algo/fsst/src/fsst.rs b/rust/lance-encoding/src/compression_algo/fsst/src/fsst.rs
+index ea59bd62..539ccfdb 100644
+--- a/rust/lance-encoding/src/compression_algo/fsst/src/fsst.rs
++++ b/rust/lance-encoding/src/compression_algo/fsst/src/fsst.rs
+@@ -46,8 +46,7 @@ const MAX_SYMBOL_LENGTH: usize = 8;
+ 
+ pub const FSST_SYMBOL_TABLE_SIZE: usize = 8 + 256 * 8 + 256; // 8 bytes for the header, 256 symbols(8 bytes each), 256 bytes for lens
+ 
+-use arrow_array::LargeStringArray;
+-use arrow_array::OffsetSizeTrait;
++use arrow_array::{LargeStringArray, OffsetSizeTrait};
+ use rand::rngs::StdRng;
+ use rand::Rng;
+ use rand::SeedableRng;
+@@ -828,6 +827,12 @@ fn decompress_bulk<T: OffsetSizeTrait>(
+             let escape_mask = (next_block & 0x80808080u32)
+                 & ((((!next_block) & 0x7F7F7F7Fu32) + 0x7F7F7F7Fu32) ^ 0x80808080u32);
+             if escape_mask == 0 {
++                // Estimate space needed for all 4 bytes (worst case: 4 * MAX_SYMBOL_LENGTH)
++                let required_space = *out_curr + 4 * MAX_SYMBOL_LENGTH;
++                if required_space > out.len() {
++                    out.resize(required_space * 2, 0);
++                }
++
+                 // 0th byte
+                 code = compressed_strs[in_curr] as usize;
+                 len = lens[code] as usize;
+@@ -868,6 +873,12 @@ fn decompress_bulk<T: OffsetSizeTrait>(
+                 in_curr += 1;
+                 *out_curr += len;
+             } else {
++                // Estimate space needed for escape cases (worst case: 3 * MAX_SYMBOL_LENGTH + 1 escape byte)
++                let required_space = *out_curr + 3 * MAX_SYMBOL_LENGTH + 1;
++                if required_space > out.len() {
++                    out.resize(required_space * 2, 0);
++                }
++
+                 let first_escape_pos = escape_mask.trailing_zeros() >> 3;
+                 if first_escape_pos == 3 {
+                     // 0th byte
+@@ -955,13 +966,12 @@ fn decompress_bulk<T: OffsetSizeTrait>(
+ 
+         // handle the remaining bytes
+         if in_curr + 2 <= in_end {
+-            if *out_curr >= out.len() {
+-                println!(
+-                    "out_curr({}) is no less than out.len({})",
+-                    *out_curr,
+-                    out.len()
+-                );
++            // Ensure we have enough space for the next operations
++            let required_space = *out_curr + MAX_SYMBOL_LENGTH + 1; // +1 for escape byte
++            if required_space > out.len() {
++                out.resize(required_space * 2, 0); // Double the size to avoid frequent resizing
+             }
++
+             out[*out_curr] = compressed_strs[in_curr + 1];
+             if compressed_strs[in_curr] != FSST_ESC {
+                 let code = compressed_strs[in_curr] as usize;
+@@ -973,6 +983,10 @@ fn decompress_bulk<T: OffsetSizeTrait>(
+                 *out_curr += lens[code] as usize;
+                 if compressed_strs[in_curr] != FSST_ESC {
+                     let code = compressed_strs[in_curr] as usize;
++                    let required_space = *out_curr + lens[code] as usize;
++                    if required_space > out.len() {
++                        out.resize(required_space * 2, 0);
++                    }
+                     unsafe {
+                         let src = symbols[code];
+                         ptr::write_unaligned(out.as_mut_ptr().add(*out_curr) as *mut u64, src);
+@@ -993,6 +1007,10 @@ fn decompress_bulk<T: OffsetSizeTrait>(
+         if in_curr < in_end {
+             // last code cannot be an escape code
+             let code = compressed_strs[in_curr] as usize;
++            let required_space = *out_curr + lens[code] as usize;
++            if required_space > out.len() {
++                out.resize(required_space * 2, 0);
++            }
+             unsafe {
+                 let src = symbols[code];
+                 ptr::write_unaligned(out.as_mut_ptr().add(*out_curr) as *mut u64, src);
+@@ -1002,7 +1020,7 @@ fn decompress_bulk<T: OffsetSizeTrait>(
+     };
+ 
+     let mut out_curr = *out_pos;
+-    out_offsets[0] = T::from_usize(0).unwrap();
++    out_offsets[0] = T::from_usize(*out_pos).unwrap();
+     for i in 1..offsets.len() {
+         let in_curr = offsets[i - 1].as_usize();
+         let in_end = offsets[i].as_usize();
+diff --git a/rust/lance-encoding/src/encodings/physical/fsst.rs b/rust/lance-encoding/src/encodings/physical/fsst.rs
+index 26653655..886c9ed3 100644
+--- a/rust/lance-encoding/src/encodings/physical/fsst.rs
++++ b/rust/lance-encoding/src/encodings/physical/fsst.rs
+@@ -263,31 +263,55 @@ impl MiniBlockDecompressor for FsstMiniBlockDecompressor {
+         let DataBlock::VariableWidth(mut compressed_data_block) = compressed_data_block else {
+             panic!("BinaryMiniBlockDecompressor should output VariableWidth DataBlock")
+         };
+-        println!("bits_per_offset={}", compressed_data_block.bits_per_offset);
+ 
+         // Step 2. FSST decompress
+         let bytes = compressed_data_block.data.borrow_to_typed_slice::<u8>();
+         let bytes = bytes.as_ref();
+-        let offsets = compressed_data_block.offsets.borrow_to_typed_slice::<i32>();
+-        let offsets = offsets.as_ref();
+ 
+-        // FSST decompression output buffer, the `MiniBlock` has a size limit of `4 KiB` and
+-        // the FSST decompression algorithm output is at most `8 * input_size`
+-        // Since `MiniBlock Size` <= 4 KiB and `offsets` are type `i32, it has number of `offsets` <= 1024.
+-        let mut decompress_bytes_buf = vec![0u8; 4 * 1024 * 8];
+-        let mut decompress_offset_buf = vec![0i32; 1024];
+-        fsst::fsst::decompress(
+-            &self.symbol_table,
+-            bytes,
+-            offsets,
+-            &mut decompress_bytes_buf,
+-            &mut decompress_offset_buf,
+-        )?;
++        // Handle both 32-bit and 64-bit offsets based on the bits_per_offset
++        let (decompress_bytes_buf, decompress_offset_buf, bits_per_offset) =
++            if compressed_data_block.bits_per_offset == 64 {
++                let offsets = compressed_data_block.offsets.borrow_to_typed_slice::<i64>();
++                let offsets = offsets.as_ref();
++
++                let mut decompress_bytes_buf = vec![0u8; bytes.len() * 8];
++                let mut decompress_offset_buf = vec![0i64; offsets.len()];
++                fsst::fsst::decompress(
++                    &self.symbol_table,
++                    bytes,
++                    offsets,
++                    &mut decompress_bytes_buf,
++                    &mut decompress_offset_buf,
++                )?;
++                (
++                    decompress_bytes_buf,
++                    LanceBuffer::reinterpret_vec(decompress_offset_buf),
++                    64,
++                )
++            } else {
++                let offsets = compressed_data_block.offsets.borrow_to_typed_slice::<i32>();
++                let offsets = offsets.as_ref();
++
++                let mut decompress_bytes_buf = vec![0u8; bytes.len() * 8];
++                let mut decompress_offset_buf = vec![0i32; offsets.len()];
++                fsst::fsst::decompress(
++                    &self.symbol_table,
++                    bytes,
++                    offsets,
++                    &mut decompress_bytes_buf,
++                    &mut decompress_offset_buf,
++                )?;
++                (
++                    decompress_bytes_buf,
++                    LanceBuffer::reinterpret_vec(decompress_offset_buf),
++                    32,
++                )
++            };
+ 
+         Ok(DataBlock::VariableWidth(VariableWidthBlock {
+             data: LanceBuffer::Owned(decompress_bytes_buf),
+-            offsets: LanceBuffer::reinterpret_vec(decompress_offset_buf),
+-            bits_per_offset: 32,
++            offsets: decompress_offset_buf,
++            bits_per_offset,
+             num_values,
+             block_info: BlockInfo::new(),
+         }))

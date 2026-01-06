@@ -1,0 +1,2 @@
+[sphinx.html_themes]
+piccolo_theme = piccolo_theme

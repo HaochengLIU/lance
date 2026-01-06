@@ -1,0 +1,823 @@
+   Compiling tokio-rustls v0.26.2
+   Compiling arrow-select v54.2.1
+   Compiling arrow-ipc v54.2.1
+   Compiling arrow-row v54.2.1
+   Compiling arrow-arith v54.2.1
+   Compiling hyper-rustls v0.27.5
+   Compiling arrow-cast v54.2.1
+   Compiling arrow-string v54.2.1
+   Compiling arrow-ord v54.2.1
+   Compiling reqwest v0.12.15
+   Compiling arrow-csv v54.2.1
+   Compiling arrow-json v54.2.1
+   Compiling object_store v0.11.2
+   Compiling arrow v54.2.1
+   Compiling aws-smithy-http-client v1.0.2
+   Compiling datafusion-common v46.0.1
+   Compiling pbjson-types v0.7.0
+   Compiling aws-smithy-runtime v1.8.3
+   Compiling lance-arrow v0.27.0 (/Users/haochengliu/Documents/projects/lance/rust/lance-arrow)
+   Compiling lance-encoding v0.27.0 (/Users/haochengliu/Documents/projects/lance/rust/lance-encoding)
+   Compiling datafusion-expr-common v46.0.1
+   Compiling aws-runtime v1.5.7
+   Compiling datafusion-physical-expr-common v46.0.1
+   Compiling datafusion-functions-aggregate-common v46.0.1
+   Compiling datafusion-functions-window-common v46.0.1
+   Compiling aws-sdk-sts v1.68.0
+   Compiling aws-sdk-ssooidc v1.68.0
+   Compiling aws-sdk-sso v1.67.0
+   Compiling datafusion-expr v46.0.1
+   Compiling substrait v0.53.2
+   Compiling aws-config v1.6.2
+   Compiling lance-file v0.27.0 (/Users/haochengliu/Documents/projects/lance/rust/lance-file)
+   Compiling parquet v54.2.1
+   Compiling lance-datagen v0.27.0 (/Users/haochengliu/Documents/projects/lance/rust/lance-datagen)
+   Compiling lance-table v0.27.0 (/Users/haochengliu/Documents/projects/lance/rust/lance-table)
+warning: lance-linalg@0.27.0: fp16kernels feature is not enabled, skipping build of fp16 kernels
+   Compiling lance-index v0.27.0 (/Users/haochengliu/Documents/projects/lance/rust/lance-index)
+   Compiling arrow-select v50.0.0
+   Compiling criterion v0.5.1
+   Compiling candle-core v0.3.3
+error[E0277]: the trait bound `bf16: SampleBorrow<bf16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2700:55
+     |
+2700 |                     rand::distributions::Uniform::new(bf16::from_f64(min), bf16::from_f64(max));
+     |                     --------------------------------- ^^^^^^^^^^^^^^^^^^^ the trait `SampleUniform` is not implemented for `bf16`
+     |                     |
+     |                     required by a bound introduced by this call
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/bfloat.rs:50:1
+     |
+50   | pub struct bf16(u16);
+     | --------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+     = note: required for `bf16` to implement `SampleBorrow<bf16>`
+note: required by a bound in `Uniform::<X>::new`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:186:13
+     |
+184  |     pub fn new<B1, B2>(low: B1, high: B2) -> Uniform<X>
+     |            --- required by a bound in this associated function
+185  |     where
+186  |         B1: SampleBorrow<X> + Sized,
+     |             ^^^^^^^^^^^^^^^ required by this bound in `Uniform::<X>::new`
+
+error[E0277]: the trait bound `bf16: SampleBorrow<bf16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2700:76
+     |
+2700 |                     rand::distributions::Uniform::new(bf16::from_f64(min), bf16::from_f64(max));
+     |                     ---------------------------------                      ^^^^^^^^^^^^^^^^^^^ the trait `SampleUniform` is not implemented for `bf16`
+     |                     |
+     |                     required by a bound introduced by this call
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/bfloat.rs:50:1
+     |
+50   | pub struct bf16(u16);
+     | --------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+     = note: required for `bf16` to implement `SampleBorrow<bf16>`
+note: required by a bound in `Uniform::<X>::new`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:187:13
+     |
+184  |     pub fn new<B1, B2>(low: B1, high: B2) -> Uniform<X>
+     |            --- required by a bound in this associated function
+...
+187  |         B2: SampleBorrow<X> + Sized,
+     |             ^^^^^^^^^^^^^^^ required by this bound in `Uniform::<X>::new`
+
+error[E0277]: the trait bound `bf16: SampleUniform` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2700:21
+     |
+2700 |                     rand::distributions::Uniform::new(bf16::from_f64(min), bf16::from_f64(max));
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `SampleUniform` is not implemented for `bf16`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/bfloat.rs:50:1
+     |
+50   | pub struct bf16(u16);
+     | --------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `Uniform`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:179:23
+     |
+179  | pub struct Uniform<X: SampleUniform>(X::Sampler);
+     |                       ^^^^^^^^^^^^^ required by this bound in `Uniform`
+
+error[E0277]: the trait bound `bf16: SampleUniform` is not satisfied in `Uniform<bf16>`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2699:21
+     |
+2699 |                 let uniform =
+     |                     ^^^^^^^ within `Uniform<bf16>`, the trait `SampleUniform` is not implemented for `bf16`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/bfloat.rs:50:1
+     |
+50   | pub struct bf16(u16);
+     | --------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required because it appears within the type `Uniform<bf16>`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:179:12
+     |
+179  | pub struct Uniform<X: SampleUniform>(X::Sampler);
+     |            ^^^^^^^
+     = note: all local variables must have a statically known size
+     = help: unsized locals are gated as an unstable feature
+
+error[E0277]: the trait bound `bf16: SampleUniform` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2702:50
+     |
+2702 |                     data.push(rng.sample::<bf16, _>(uniform))
+     |                                                  ^ the trait `SampleUniform` is not implemented for `bf16`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/bfloat.rs:50:1
+     |
+50   | pub struct bf16(u16);
+     | --------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `Uniform`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:179:23
+     |
+179  | pub struct Uniform<X: SampleUniform>(X::Sampler);
+     |                       ^^^^^^^^^^^^^ required by this bound in `Uniform`
+
+error[E0277]: the trait bound `half::f16: SampleBorrow<half::f16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2709:55
+     |
+2709 |                     rand::distributions::Uniform::new(f16::from_f64(min), f16::from_f64(max));
+     |                     --------------------------------- ^^^^^^^^^^^^^^^^^^ the trait `SampleUniform` is not implemented for `half::f16`
+     |                     |
+     |                     required by a bound introduced by this call
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/binary16.rs:50:1
+     |
+50   | pub struct f16(u16);
+     | -------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+     = note: required for `half::f16` to implement `SampleBorrow<half::f16>`
+note: required by a bound in `Uniform::<X>::new`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:186:13
+     |
+184  |     pub fn new<B1, B2>(low: B1, high: B2) -> Uniform<X>
+     |            --- required by a bound in this associated function
+185  |     where
+186  |         B1: SampleBorrow<X> + Sized,
+     |             ^^^^^^^^^^^^^^^ required by this bound in `Uniform::<X>::new`
+
+error[E0277]: the trait bound `half::f16: SampleBorrow<half::f16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2709:75
+     |
+2709 |                     rand::distributions::Uniform::new(f16::from_f64(min), f16::from_f64(max));
+     |                     ---------------------------------                     ^^^^^^^^^^^^^^^^^^ the trait `SampleUniform` is not implemented for `half::f16`
+     |                     |
+     |                     required by a bound introduced by this call
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/binary16.rs:50:1
+     |
+50   | pub struct f16(u16);
+     | -------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+     = note: required for `half::f16` to implement `SampleBorrow<half::f16>`
+note: required by a bound in `Uniform::<X>::new`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:187:13
+     |
+184  |     pub fn new<B1, B2>(low: B1, high: B2) -> Uniform<X>
+     |            --- required by a bound in this associated function
+...
+187  |         B2: SampleBorrow<X> + Sized,
+     |             ^^^^^^^^^^^^^^^ required by this bound in `Uniform::<X>::new`
+
+error[E0277]: the trait bound `half::f16: SampleUniform` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2709:21
+     |
+2709 |                     rand::distributions::Uniform::new(f16::from_f64(min), f16::from_f64(max));
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `SampleUniform` is not implemented for `half::f16`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/binary16.rs:50:1
+     |
+50   | pub struct f16(u16);
+     | -------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `Uniform`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:179:23
+     |
+179  | pub struct Uniform<X: SampleUniform>(X::Sampler);
+     |                       ^^^^^^^^^^^^^ required by this bound in `Uniform`
+
+error[E0277]: the trait bound `half::f16: SampleUniform` is not satisfied in `Uniform<half::f16>`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2708:21
+     |
+2708 |                 let uniform =
+     |                     ^^^^^^^ within `Uniform<half::f16>`, the trait `SampleUniform` is not implemented for `half::f16`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/binary16.rs:50:1
+     |
+50   | pub struct f16(u16);
+     | -------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required because it appears within the type `Uniform<half::f16>`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:179:12
+     |
+179  | pub struct Uniform<X: SampleUniform>(X::Sampler);
+     |            ^^^^^^^
+     = note: all local variables must have a statically known size
+     = help: unsized locals are gated as an unstable feature
+
+error[E0277]: the trait bound `half::f16: SampleUniform` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2711:49
+     |
+2711 |                     data.push(rng.sample::<f16, _>(uniform))
+     |                                                 ^ the trait `SampleUniform` is not implemented for `half::f16`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:216:1
+     |
+216  | pub trait SampleUniform: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.6.0/src/binary16.rs:50:1
+     |
+50   | pub struct f16(u16);
+     | -------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `Uniform`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/uniform.rs:179:23
+     |
+179  | pub struct Uniform<X: SampleUniform>(X::Sampler);
+     |                       ^^^^^^^^^^^^^ required by this bound in `Uniform`
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<bf16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2745:30
+     |
+2745 |                 let normal = rand_distr::Normal::new(bf16::from_f64(mean), bf16::from_f64(std))
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^ the trait `rand_distr::Distribution<bf16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal::<F>::new`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:147:33
+     |
+147  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal::<F>::new`
+...
+156  |     pub fn new(mean: F, std_dev: F) -> Result<Normal<F>, Error> {
+     |            --- required by a bound in this associated function
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<bf16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2745:30
+     |
+2745 |                 let normal = rand_distr::Normal::new(bf16::from_f64(mean), bf16::from_f64(std))
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `rand_distr::Distribution<bf16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:118:33
+     |
+117  | pub struct Normal<F>
+     |            ------ required by a bound in this struct
+118  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal`
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<bf16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2745:30
+     |
+2745 |                   let normal = rand_distr::Normal::new(bf16::from_f64(mean), bf16::from_f64(std))
+     |  ______________________________^
+2746 | |                     .map_err(Error::wrap)?;
+     | |_________________________________________^ the trait `rand_distr::Distribution<bf16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:118:33
+     |
+117  | pub struct Normal<F>
+     |            ------ required by a bound in this struct
+118  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal`
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<bf16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2745:30
+     |
+2745 |                   let normal = rand_distr::Normal::new(bf16::from_f64(mean), bf16::from_f64(std))
+     |  ______________________________^
+2746 | |                     .map_err(Error::wrap)?;
+     | |__________________________________________^ the trait `rand_distr::Distribution<bf16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:118:33
+     |
+117  | pub struct Normal<F>
+     |            ------ required by a bound in this struct
+118  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal`
+
+error[E0599]: the method `sample` exists for struct `Normal<bf16>`, but its trait bounds were not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2748:38
+     |
+2748 |                     data.push(normal.sample(&mut rng))
+     |                                      ^^^^^^ method cannot be called on `Normal<bf16>` due to unsatisfied trait bounds
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- doesn't satisfy `StandardNormal: rand_distr::Distribution<bf16>`
+...
+117  | pub struct Normal<F>
+     | -------------------- doesn't satisfy `_: Distribution<bf16>`, `rand_distr::Normal<bf16>: RngCore` or `rand_distr::Normal<bf16>: rand::Rng`
+     |
+     = note: the following trait bounds were not satisfied:
+             `StandardNormal: rand_distr::Distribution<bf16>`
+             which is required by `rand_distr::Normal<bf16>: rand_distr::Distribution<bf16>`
+             `rand_distr::Normal<bf16>: RngCore`
+             which is required by `rand_distr::Normal<bf16>: rand::Rng`
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<half::f16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2754:30
+     |
+2754 |                 let normal = rand_distr::Normal::new(f16::from_f64(mean), f16::from_f64(std))
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^ the trait `rand_distr::Distribution<half::f16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal::<F>::new`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:147:33
+     |
+147  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal::<F>::new`
+...
+156  |     pub fn new(mean: F, std_dev: F) -> Result<Normal<F>, Error> {
+     |            --- required by a bound in this associated function
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<half::f16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2754:30
+     |
+2754 |                 let normal = rand_distr::Normal::new(f16::from_f64(mean), f16::from_f64(std))
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `rand_distr::Distribution<half::f16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:118:33
+     |
+117  | pub struct Normal<F>
+     |            ------ required by a bound in this struct
+118  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal`
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<half::f16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2754:30
+     |
+2754 |                   let normal = rand_distr::Normal::new(f16::from_f64(mean), f16::from_f64(std))
+     |  ______________________________^
+2755 | |                     .map_err(Error::wrap)?;
+     | |_________________________________________^ the trait `rand_distr::Distribution<half::f16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:118:33
+     |
+117  | pub struct Normal<F>
+     |            ------ required by a bound in this struct
+118  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal`
+
+error[E0277]: the trait bound `StandardNormal: rand_distr::Distribution<half::f16>` is not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2754:30
+     |
+2754 |                   let normal = rand_distr::Normal::new(f16::from_f64(mean), f16::from_f64(std))
+     |  ______________________________^
+2755 | |                     .map_err(Error::wrap)?;
+     | |__________________________________________^ the trait `rand_distr::Distribution<half::f16>` is not implemented for `StandardNormal`
+     |
+note: there are multiple different versions of crate `rand` in the dependency graph
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.8.5/src/distributions/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^ this is the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2689:13
+     |
+2689 |         use rand::prelude::*;
+     |             ---- one version of crate `rand` used here, as a direct dependency of the current crate
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/convert.rs:3:5
+     |
+3    | use half::{bf16, f16, slice::HalfFloatSliceExt};
+     |     ---- one version of crate `rand` used here, as a dependency of crate `half`
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- this type doesn't implement the required trait
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand-0.9.1/src/distr/distribution.rs:35:1
+     |
+35   | pub trait Distribution<T> {
+     | ------------------------- this is the found trait
+     = help: you can use `cargo tree` to explore your dependency tree
+note: required by a bound in `rand_distr::Normal`
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:118:33
+     |
+117  | pub struct Normal<F>
+     |            ------ required by a bound in this struct
+118  | where F: Float, StandardNormal: Distribution<F>
+     |                                 ^^^^^^^^^^^^^^^ required by this bound in `Normal`
+
+error[E0599]: the method `sample` exists for struct `Normal<f16>`, but its trait bounds were not satisfied
+    --> /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/candle-core-0.3.3/src/cpu_backend.rs:2757:38
+     |
+2757 |                     data.push(normal.sample(&mut rng))
+     |                                      ^^^^^^ method cannot be called on `Normal<f16>` due to unsatisfied trait bounds
+     |
+    ::: /Users/haochengliu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_distr-0.4.3/src/normal.rs:41:1
+     |
+41   | pub struct StandardNormal;
+     | ------------------------- doesn't satisfy `_: Distribution<f16>`
+...
+117  | pub struct Normal<F>
+     | -------------------- doesn't satisfy `_: Distribution<f16>`, `rand_distr::Normal<half::f16>: RngCore` or `rand_distr::Normal<half::f16>: rand::Rng`
+     |
+     = note: the following trait bounds were not satisfied:
+             `StandardNormal: rand_distr::Distribution<half::f16>`
+             which is required by `rand_distr::Normal<half::f16>: rand_distr::Distribution<half::f16>`
+             `rand_distr::Normal<half::f16>: RngCore`
+             which is required by `rand_distr::Normal<half::f16>: rand::Rng`
+
+   Compiling arrow-cast v50.0.0
+Some errors have detailed explanations: E0277, E0599.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `candle-core` (lib) due to 20 previous errors
+warning: build failed, waiting for other jobs to finish...

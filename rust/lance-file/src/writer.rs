@@ -829,31 +829,35 @@ impl FileWriter {
         // Column-oriented layout: one row per dataset column
         // Each field contains a list of values (one per zone)
         let mut column_names = Vec::new();
-        
+
         // Create list builders with proper field definitions (non-nullable items)
         let zone_starts_field = ArrowField::new("item", DataType::UInt64, false);
-        let mut zone_starts_builder = ListBuilder::new(UInt64Builder::with_capacity(processors.len()))
-            .with_field(zone_starts_field);
-        
+        let mut zone_starts_builder =
+            ListBuilder::new(UInt64Builder::with_capacity(processors.len()))
+                .with_field(zone_starts_field);
+
         let zone_lengths_field = ArrowField::new("item", DataType::UInt64, false);
-        let mut zone_lengths_builder = ListBuilder::new(UInt64Builder::with_capacity(processors.len()))
-            .with_field(zone_lengths_field);
-        
+        let mut zone_lengths_builder =
+            ListBuilder::new(UInt64Builder::with_capacity(processors.len()))
+                .with_field(zone_lengths_field);
+
         let null_counts_field = ArrowField::new("item", DataType::UInt32, false);
-        let mut null_counts_builder = ListBuilder::new(UInt32Builder::with_capacity(processors.len()))
-            .with_field(null_counts_field);
-        
+        let mut null_counts_builder =
+            ListBuilder::new(UInt32Builder::with_capacity(processors.len()))
+                .with_field(null_counts_field);
+
         let nan_counts_field = ArrowField::new("item", DataType::UInt32, false);
-        let mut nan_counts_builder = ListBuilder::new(UInt32Builder::with_capacity(processors.len()))
-            .with_field(nan_counts_field);
-        
+        let mut nan_counts_builder =
+            ListBuilder::new(UInt32Builder::with_capacity(processors.len()))
+                .with_field(nan_counts_field);
+
         let mins_field = ArrowField::new("item", DataType::Utf8, false);
         let mut mins_builder = ListBuilder::new(StringBuilder::with_capacity(
             processors.len(),
             processors.len() * 32,
         ))
         .with_field(mins_field);
-        
+
         let maxs_field = ArrowField::new("item", DataType::Utf8, false);
         let mut maxs_builder = ListBuilder::new(StringBuilder::with_capacity(
             processors.len(),
@@ -873,9 +877,7 @@ impl FileWriter {
 
             // Build arrays for this column's zones
             for zone in &zones {
-                zone_starts_builder
-                    .values()
-                    .append_value(zone.bound.start);
+                zone_starts_builder.values().append_value(zone.bound.start);
                 zone_lengths_builder
                     .values()
                     .append_value(zone.bound.length as u64);

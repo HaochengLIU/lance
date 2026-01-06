@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../../Library/CloudStorage/Dropbox/LBTING/selfImprovement/tech"
+		}
+	],
+	"settings": {
+		"git.ignoreLimitWarning": true
+	},
+	"editor.formatOnSave": true,
+}
