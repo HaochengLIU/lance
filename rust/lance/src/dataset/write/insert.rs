@@ -216,28 +216,39 @@ impl<'a> InsertBuilder<'a> {
     ) -> Result<Transaction> {
         let operation = match context.params.mode {
             WriteMode::Create => {
-                let config_upsert_values =
-                    if let Some(auto_cleanup_params) = context.params.auto_cleanup.as_ref() {
-                        let mut upsert_values = HashMap::new();
-                        upsert_values.insert(
-                            String::from("lance.auto_cleanup.interval"),
-                            auto_cleanup_params.interval.to_string(),
-                        );
+                let mut config_upsert_values: Option<HashMap<String, String>> = None;
 
-                        let duration = auto_cleanup_params.older_than.to_std().map_err(|e| {
-                            Error::InvalidInput {
-                                source: e.into(),
-                                location: location!(),
-                            }
-                        })?;
-                        upsert_values.insert(
-                            String::from("lance.auto_cleanup.older_than"),
-                            format_duration(duration).to_string(),
+                // Set column stats policy if enabled
+                if context.params.enable_column_stats {
+                    config_upsert_values
+                        .get_or_insert_with(HashMap::new)
+                        .insert(
+                            String::from("lance.column_stats.enabled"),
+                            String::from("true"),
                         );
-                        Some(upsert_values)
-                    } else {
-                        None
-                    };
+                }
+
+                // Set auto cleanup params if provided
+                if let Some(auto_cleanup_params) = context.params.auto_cleanup.as_ref() {
+                    let upsert_values = config_upsert_values.get_or_insert_with(HashMap::new);
+
+                    upsert_values.insert(
+                        String::from("lance.auto_cleanup.interval"),
+                        auto_cleanup_params.interval.to_string(),
+                    );
+
+                    let duration = auto_cleanup_params.older_than.to_std().map_err(|e| {
+                        Error::InvalidInput {
+                            source: e.into(),
+                            location: location!(),
+                        }
+                    })?;
+                    upsert_values.insert(
+                        String::from("lance.auto_cleanup.older_than"),
+                        format_duration(duration).to_string(),
+                    );
+                }
+
                 Operation::Overwrite {
                     // Use the full schema, not the written schema
                     schema,
@@ -514,5 +525,139 @@ mod test {
             .await;
 
         assert!(matches!(result, Err(Error::InvalidInput { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_column_stats_policy_set_on_create() {
+        // Test that lance.column_stats.enabled is set in manifest when creating dataset with stats enabled
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+
+        let dataset = InsertBuilder::new("memory://test_column_stats_create")
+            .with_params(&WriteParams {
+                enable_column_stats: true,
+                ..Default::default()
+            })
+            .execute_stream(RecordBatchIterator::new(vec![Ok(batch)], schema.clone()))
+            .await
+            .unwrap();
+
+        // Check that the manifest has the column stats config
+        let config_value = dataset.manifest.config.get("lance.column_stats.enabled");
+        assert_eq!(config_value, Some(&"true".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_column_stats_policy_not_set_when_disabled() {
+        // Test that lance.column_stats.enabled is not set when stats are disabled
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+
+        let dataset = InsertBuilder::new("memory://test_column_stats_disabled")
+            .with_params(&WriteParams {
+                enable_column_stats: false,
+                ..Default::default()
+            })
+            .execute_stream(RecordBatchIterator::new(vec![Ok(batch)], schema.clone()))
+            .await
+            .unwrap();
+
+        // Check that the manifest does not have the column stats config
+        let config_value = dataset.manifest.config.get("lance.column_stats.enabled");
+        assert_eq!(config_value, None);
+    }
+
+    #[tokio::test]
+    async fn test_policy_enforcement_on_append() {
+        // Test that appending with different column stats policy fails
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+        let batch1 = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+
+        // Create dataset with stats enabled
+        let dataset = InsertBuilder::new("memory://test_policy_enforcement")
+            .with_params(&WriteParams {
+                enable_column_stats: true,
+                ..Default::default()
+            })
+            .execute_stream(RecordBatchIterator::new(vec![Ok(batch1)], schema.clone()))
+            .await
+            .unwrap();
+
+        let dataset = Arc::new(dataset);
+
+        // Try to append with stats disabled - should fail
+        let batch2 = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from(vec![4, 5, 6]))],
+        )
+        .unwrap();
+
+        let result = InsertBuilder::new(dataset.clone())
+            .with_params(&WriteParams {
+                mode: WriteMode::Append,
+                enable_column_stats: false,
+                ..Default::default()
+            })
+            .execute_stream(RecordBatchIterator::new(vec![Ok(batch2)], schema.clone()))
+            .await;
+
+        assert!(matches!(result, Err(Error::InvalidInput { .. })));
+        if let Err(Error::InvalidInput { source, .. }) = result {
+            let error_msg = source.to_string();
+            assert!(error_msg.contains("Column statistics policy mismatch"));
+            assert!(error_msg.contains("enable_column_stats=true"));
+            assert!(error_msg.contains("enable_column_stats=false"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_write_params_for_dataset_inherits_policy() {
+        // Test that WriteParams::for_dataset() correctly inherits the column stats policy
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+
+        // Create dataset with stats enabled
+        let dataset = InsertBuilder::new("memory://test_inherit_policy")
+            .with_params(&WriteParams {
+                enable_column_stats: true,
+                ..Default::default()
+            })
+            .execute_stream(RecordBatchIterator::new(
+                vec![Ok(batch.clone())],
+                schema.clone(),
+            ))
+            .await
+            .unwrap();
+
+        // Use WriteParams::for_dataset() which should inherit enable_column_stats=true
+        let params = WriteParams::for_dataset(&dataset);
+        assert_eq!(params.enable_column_stats, true);
+
+        // Appending with inherited params should succeed
+        let result = InsertBuilder::new(Arc::new(dataset))
+            .with_params(&WriteParams {
+                mode: WriteMode::Append,
+                ..params
+            })
+            .execute_stream(RecordBatchIterator::new(vec![Ok(batch)], schema.clone()))
+            .await;
+
+        assert!(result.is_ok());
     }
 }
