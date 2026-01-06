@@ -66,6 +66,7 @@ pub(crate) mod blob;
 mod branch_location;
 pub mod builder;
 pub mod cleanup;
+pub mod column_stats;
 pub mod delta;
 pub mod fragment;
 mod hash_joiner;

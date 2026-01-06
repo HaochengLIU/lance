@@ -156,6 +156,14 @@ pub struct CompactionOptions {
     /// not be remapped during this compaction operation. Instead, the fragment reuse index
     /// is updated and will be used to perform remapping later.
     pub defer_index_remap: bool,
+    /// Whether to consolidate column statistics during compaction.
+    ///
+    /// When enabled, per-fragment column statistics are merged into a single
+    /// consolidated stats file. This only happens if ALL fragments have statistics
+    /// (all-or-nothing policy).
+    ///
+    /// Defaults to true.
+    pub consolidate_column_stats: bool,
 }
 
 impl Default for CompactionOptions {
@@ -170,6 +178,7 @@ impl Default for CompactionOptions {
             max_bytes_per_file: None,
             batch_size: None,
             defer_index_remap: false,
+            consolidate_column_stats: true,
         }
     }
 }
@@ -1125,6 +1134,36 @@ pub async fn commit_compaction(
     dataset
         .apply_commit(transaction, &Default::default(), &Default::default())
         .await?;
+
+    // Consolidate column statistics if enabled (after the commit)
+    if options.consolidate_column_stats {
+        let new_version = dataset.manifest.version;
+        if let Some(stats_path) =
+            crate::dataset::column_stats::consolidate_column_stats(dataset, new_version).await?
+        {
+            // Update manifest config with stats file path
+            let mut upsert_values = HashMap::new();
+            upsert_values.insert("lance.column_stats.file".to_string(), stats_path);
+
+            let config_update_txn = Transaction::new(
+                dataset.manifest.version,
+                Operation::UpdateConfig {
+                    config_updates: Some(crate::dataset::transaction::translate_config_updates(
+                        &upsert_values,
+                        &[],
+                    )),
+                    table_metadata_updates: None,
+                    schema_metadata_updates: None,
+                    field_metadata_updates: HashMap::new(),
+                },
+                None,
+            );
+
+            dataset
+                .apply_commit(config_update_txn, &Default::default(), &Default::default())
+                .await?;
+        }
+    }
 
     Ok(metrics)
 }
