@@ -1453,14 +1453,13 @@ impl FileReader {
     /// ```
     pub async fn read_column_stats(&self) -> Result<Option<arrow_array::RecordBatch>> {
         // Check if column stats exist
-        let buffer_index_str = match self
+        let Some(buffer_index_str) = self
             .metadata
             .file_schema
             .metadata
             .get("lance:column_stats:buffer_index")
-        {
-            Some(idx) => idx,
-            None => return Ok(None),
+        else {
+            return Ok(None);
         };
 
         // Parse the buffer index

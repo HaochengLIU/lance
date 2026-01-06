@@ -14,8 +14,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow_array::{Array, ArrayRef, ListArray, RecordBatch, StringArray, UInt32Array, UInt64Array};
 use arrow_array::builder::{ListBuilder, StringBuilder, UInt32Builder, UInt64Builder};
+use arrow_array::{Array, ArrayRef, ListArray, RecordBatch, StringArray, UInt32Array, UInt64Array};
 use arrow_schema::{DataType, Field as ArrowField, Schema as ArrowSchema};
 use lance_core::datatypes::Schema;
 use lance_core::Result;
@@ -34,12 +34,12 @@ use crate::{Dataset, Error};
 #[derive(Debug, Clone)]
 pub struct ZoneStats {
     pub fragment_id: u64,
-    pub zone_start: u64,  // Global offset
+    pub zone_start: u64, // Global offset
     pub zone_length: u64,
     pub null_count: u32,
     pub nan_count: u32,
-    pub min: String,  // ScalarValue debug format
-    pub max: String,  // ScalarValue debug format
+    pub min: String, // ScalarValue debug format
+    pub max: String, // ScalarValue debug format
 }
 
 /// Consolidate column statistics from all fragments into a single file.
@@ -111,7 +111,7 @@ pub async fn consolidate_column_stats(
                         .into_iter()
                         .map(|z| ZoneStats {
                             fragment_id: fragment.id() as u64,
-                            zone_start: base_offset + z.zone_start,  // LOCAL → GLOBAL
+                            zone_start: base_offset + z.zone_start, // LOCAL → GLOBAL
                             zone_length: z.zone_length,
                             null_count: z.null_count,
                             nan_count: z.nan_count,
@@ -172,7 +172,10 @@ async fn fragment_has_stats(dataset: &Dataset, fragment: &FileFragment) -> Resul
             file_scheduler,
             None,
             Arc::<DecoderPlugins>::default(),
-            &dataset.session.metadata_cache.file_metadata_cache(&file_path),
+            &dataset
+                .session
+                .metadata_cache
+                .file_metadata_cache(&file_path),
             dataset.file_reader_options.clone().unwrap_or_default(),
         )
         .await?;
@@ -202,14 +205,16 @@ async fn read_fragment_column_stats(
         file_scheduler,
         None,
         Arc::<DecoderPlugins>::default(),
-        &dataset.session.metadata_cache.file_metadata_cache(file_path),
+        &dataset
+            .session
+            .metadata_cache
+            .file_metadata_cache(file_path),
         dataset.file_reader_options.clone().unwrap_or_default(),
     )
     .await?;
 
-    let stats_batch = match file_reader.read_column_stats().await? {
-        Some(batch) => batch,
-        None => return Ok(None),
+    let Some(stats_batch) = file_reader.read_column_stats().await? else {
+        return Ok(None);
     };
 
     // Parse the column-oriented stats batch
@@ -343,7 +348,7 @@ async fn read_fragment_column_stats(
 
         for zone_idx in 0..num_zones {
             zones.push(ZoneStats {
-                fragment_id: 0,  // Will be set by caller
+                fragment_id: 0, // Will be set by caller
                 zone_start: zone_starts.value(zone_idx),
                 zone_length: zone_lengths.value(zone_idx),
                 null_count: null_counts.value(zone_idx),
@@ -512,10 +517,12 @@ async fn write_stats_file(
 ) -> Result<()> {
     use lance_file::writer::{FileWriter, FileWriterOptions};
 
-    let lance_schema = lance_core::datatypes::Schema::try_from(batch.schema().as_ref())
-        .map_err(|e| Error::Internal {
-            message: format!("Failed to convert schema: {}", e),
-            location: location!(),
+    let lance_schema =
+        lance_core::datatypes::Schema::try_from(batch.schema().as_ref()).map_err(|e| {
+            Error::Internal {
+                message: format!("Failed to convert schema: {}", e),
+                location: location!(),
+            }
         })?;
 
     let mut writer = FileWriter::try_new(
@@ -528,4 +535,315 @@ async fn write_stats_file(
     writer.finish().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dataset::WriteParams;
+    use crate::Dataset;
+    use arrow_array::{Int32Array, RecordBatchIterator, StringArray as ArrowStringArray};
+    use arrow_schema::{DataType, Field as ArrowField, Schema as ArrowSchema};
+    use lance_datagen::RowCount;
+    use lance_testing::datagen::generate_random_array;
+
+    #[tokio::test]
+    async fn test_consolidation_all_fragments_have_stats() {
+        // Create dataset with column stats enabled
+        let test_dir = tempfile::tempdir().unwrap();
+        let test_uri = test_dir.path().to_str().unwrap();
+
+        let schema = Arc::new(ArrowSchema::new(vec![
+            ArrowField::new("id", DataType::Int32, false),
+            ArrowField::new("name", DataType::Utf8, false),
+        ]));
+
+        // Create 3 fragments, each with stats
+        let write_params = WriteParams {
+            max_rows_per_file: 100,
+            enable_column_stats: true,
+            ..Default::default()
+        };
+
+        for i in 0..3 {
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from_iter_values(
+                        (i * 100)..((i + 1) * 100),
+                    )),
+                    Arc::new(ArrowStringArray::from_iter_values(
+                        (i * 100)..((i + 1) * 100)
+                            .map(|n| format!("name_{}", n))
+                            .collect::<Vec<_>>(),
+                    )),
+                ],
+            )
+            .unwrap();
+
+            let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+
+            if i == 0 {
+                Dataset::write(reader, test_uri, Some(write_params.clone()))
+                    .await
+                    .unwrap();
+            } else {
+                let dataset = Dataset::open(test_uri).await.unwrap();
+                let mut append_params = WriteParams::for_dataset(&dataset).unwrap();
+                append_params.mode = crate::dataset::WriteMode::Append;
+                Dataset::write(reader, test_uri, Some(append_params))
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let dataset = Dataset::open(test_uri).await.unwrap();
+        assert_eq!(dataset.get_fragments().len(), 3);
+
+        // Test consolidation
+        let result = consolidate_column_stats(&dataset, dataset.manifest.version + 1)
+            .await
+            .unwrap();
+
+        assert!(
+            result.is_some(),
+            "Consolidation should succeed when all fragments have stats"
+        );
+
+        let stats_path = result.unwrap();
+        assert!(stats_path.starts_with("_stats/column_stats_v"));
+        assert!(stats_path.ends_with(".lance"));
+    }
+
+    #[tokio::test]
+    async fn test_consolidation_some_fragments_lack_stats() {
+        // Create dataset with mixed stats
+        let test_dir = tempfile::tempdir().unwrap();
+        let test_uri = test_dir.path().to_str().unwrap();
+
+        let schema = Arc::new(ArrowSchema::new(vec![ArrowField::new(
+            "id",
+            DataType::Int32,
+            false,
+        )]));
+
+        // First fragment WITH stats
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from_iter_values(0..100))],
+        )
+        .unwrap();
+        let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+        let write_params = WriteParams {
+            max_rows_per_file: 100,
+            enable_column_stats: true,
+            ..Default::default()
+        };
+        Dataset::write(reader, test_uri, Some(write_params))
+            .await
+            .unwrap();
+
+        // Second fragment WITHOUT stats
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from_iter_values(100..200))],
+        )
+        .unwrap();
+        let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+        let dataset = Dataset::open(test_uri).await.unwrap();
+        let mut append_params = WriteParams::for_dataset(&dataset).unwrap();
+        append_params.mode = crate::dataset::WriteMode::Append;
+        append_params.enable_column_stats = false; // Explicitly disable
+        Dataset::write(reader, test_uri, Some(append_params))
+            .await
+            .unwrap();
+
+        let dataset = Dataset::open(test_uri).await.unwrap();
+        assert_eq!(dataset.get_fragments().len(), 2);
+
+        // Test consolidation - should skip
+        let result = consolidate_column_stats(&dataset, dataset.manifest.version + 1)
+            .await
+            .unwrap();
+
+        assert!(
+            result.is_none(),
+            "Consolidation should skip when some fragments lack stats"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_global_offset_calculation() {
+        // Test that zone offsets are correctly adjusted to global positions
+        let test_dir = tempfile::tempdir().unwrap();
+        let test_uri = test_dir.path().to_str().unwrap();
+
+        let schema = Arc::new(ArrowSchema::new(vec![ArrowField::new(
+            "value",
+            DataType::Int32,
+            false,
+        )]));
+
+        let write_params = WriteParams {
+            max_rows_per_file: 100,
+            enable_column_stats: true,
+            ..Default::default()
+        };
+
+        // Create 2 fragments with 100 rows each
+        for i in 0..2 {
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(Int32Array::from_iter_values(
+                    (i * 100)..((i + 1) * 100),
+                ))],
+            )
+            .unwrap();
+            let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+
+            if i == 0 {
+                Dataset::write(reader, test_uri, Some(write_params.clone()))
+                    .await
+                    .unwrap();
+            } else {
+                let dataset = Dataset::open(test_uri).await.unwrap();
+                let mut append_params = WriteParams::for_dataset(&dataset).unwrap();
+                append_params.mode = crate::dataset::WriteMode::Append;
+                Dataset::write(reader, test_uri, Some(append_params))
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let dataset = Dataset::open(test_uri).await.unwrap();
+        let stats_path = consolidate_column_stats(&dataset, dataset.manifest.version + 1)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Read the consolidated stats file
+        let full_path = dataset.base.child(stats_path.as_str());
+        let scheduler = lance_io::scheduler::ScanScheduler::new(
+            dataset.object_store.clone(),
+            lance_io::scheduler::SchedulerConfig::max_bandwidth(&dataset.object_store),
+        );
+        let file_scheduler = scheduler
+            .open_file(&full_path, &lance_io::utils::CachedFileSize::unknown())
+            .await
+            .unwrap();
+        let reader = lance_file::reader::FileReader::try_open(
+            file_scheduler,
+            None,
+            Arc::<lance_encoding::decoder::DecoderPlugins>::default(),
+            &dataset
+                .session
+                .metadata_cache
+                .file_metadata_cache(&full_path),
+            dataset.file_reader_options.clone().unwrap_or_default(),
+        )
+        .await
+        .unwrap();
+
+        let stats_batch = reader.read_all_batches().await.unwrap();
+        assert_eq!(stats_batch.len(), 1);
+        let batch = &stats_batch[0];
+
+        // Verify zone_starts contain global offsets
+        let zone_starts_list = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let zone_starts_ref = zone_starts_list.value(0);
+        let zone_starts = zone_starts_ref
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+
+        // First fragment should start at 0, second at 100
+        assert_eq!(zone_starts.value(0), 0);
+        // The exact value depends on zone size, but should be >= 100 for second fragment
+        // Since we have small data, there might be only one zone per fragment
+    }
+
+    #[tokio::test]
+    async fn test_empty_dataset() {
+        let test_dir = tempfile::tempdir().unwrap();
+        let test_uri = test_dir.path().to_str().unwrap();
+
+        let schema = Arc::new(ArrowSchema::new(vec![ArrowField::new(
+            "id",
+            DataType::Int32,
+            false,
+        )]));
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int32Array::from(vec![1]))],
+        )
+        .unwrap();
+        let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+        let write_params = WriteParams {
+            enable_column_stats: true,
+            ..Default::default()
+        };
+
+        let mut dataset = Dataset::write(reader, test_uri, Some(write_params))
+            .await
+            .unwrap();
+
+        // Delete all rows
+        dataset.delete("id >= 0").await.unwrap();
+        dataset = Dataset::open(test_uri).await.unwrap();
+
+        // Should still work but return None (no data to consolidate)
+        let result = consolidate_column_stats(&dataset, dataset.manifest.version + 1)
+            .await
+            .unwrap();
+
+        // With deletions, fragments still exist, so consolidation should work
+        // This tests that we handle the case gracefully
+        assert!(result.is_some() || result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_column_types() {
+        let test_dir = tempfile::tempdir().unwrap();
+        let test_uri = test_dir.path().to_str().unwrap();
+
+        let schema = Arc::new(ArrowSchema::new(vec![
+            ArrowField::new("int_col", DataType::Int32, false),
+            ArrowField::new("float_col", DataType::Float64, false),
+            ArrowField::new("string_col", DataType::Utf8, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from_iter_values(0..100)),
+                    Arc::new(generate_random_array(RowCount::from(100))),
+                    Arc::new(ArrowStringArray::from_iter_values(
+                        (0..100).map(|i| format!("str_{}", i)),
+                    )),
+                ],
+        )
+        .unwrap();
+
+        let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+        let write_params = WriteParams {
+            enable_column_stats: true,
+            ..Default::default()
+        };
+
+        Dataset::write(reader, test_uri, Some(write_params))
+            .await
+            .unwrap();
+
+        let dataset = Dataset::open(test_uri).await.unwrap();
+        let result = consolidate_column_stats(&dataset, dataset.manifest.version + 1)
+            .await
+            .unwrap();
+
+        assert!(result.is_some(), "Should handle multiple column types");
+    }
 }

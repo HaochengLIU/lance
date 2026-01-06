@@ -3709,4 +3709,272 @@ mod tests {
         // make sure options.validate() worked
         assert!(!plan.options.materialize_deletions);
     }
+
+    #[tokio::test]
+    async fn test_compaction_with_column_stats_consolidation() {
+        use crate::dataset::WriteParams;
+
+        let test_dir = TempStrDir::default();
+        let test_uri = &test_dir;
+
+        // Create dataset with column stats enabled
+        let arrow_schema = Arc::new(ArrowSchema::new(vec![
+            ArrowField::new("id", DataType::Int32, false),
+            ArrowField::new("value", DataType::Float32, false),
+        ]));
+
+        let write_params = WriteParams {
+            max_rows_per_file: 100,
+            enable_column_stats: true,
+            ..Default::default()
+        };
+
+        // Write 5 small fragments (candidates for compaction)
+        for i in 0..5 {
+            let batch = RecordBatch::try_new(
+                arrow_schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from_iter_values(
+                        (i * 100)..((i + 1) * 100),
+                    )),
+                    Arc::new(Float32Array::from_iter_values(
+                        ((i * 100)..((i + 1) * 100)).map(|n| n as f32),
+                    )),
+                ],
+            )
+            .unwrap();
+            let reader = RecordBatchIterator::new(vec![Ok(batch)], arrow_schema.clone());
+
+            if i == 0 {
+                Dataset::write(reader, test_uri, Some(write_params.clone()))
+                    .await
+                    .unwrap();
+            } else {
+                let dataset = Dataset::open(test_uri).await.unwrap();
+                let append_params = WriteParams {
+                    mode: crate::dataset::WriteMode::Append,
+                    enable_column_stats: true,
+                    ..Default::default()
+                };
+                Dataset::write(reader, test_uri, Some(append_params))
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let mut dataset = Dataset::open(test_uri).await.unwrap();
+        assert_eq!(dataset.get_fragments().len(), 5);
+
+        // Run compaction with column stats consolidation
+        let options = CompactionOptions {
+            target_rows_per_fragment: 2_000,
+            consolidate_column_stats: true,
+            ..Default::default()
+        };
+
+        let metrics = compact_files(&mut dataset, options, None).await.unwrap();
+        assert!(metrics.fragments_removed > 0);
+        assert!(metrics.fragments_added > 0);
+
+        // Verify manifest has column stats file reference
+        dataset = Dataset::open(test_uri).await.unwrap();
+        let stats_file = dataset.manifest.config.get("lance.column_stats.file");
+        assert!(
+            stats_file.is_some(),
+            "Manifest should contain column stats file reference"
+        );
+
+        let stats_path = stats_file.unwrap();
+        assert!(stats_path.starts_with("_stats/column_stats_v"));
+
+        // Verify the consolidated stats file exists
+        let full_path = dataset.base.child(stats_path.as_str());
+        let scheduler = lance_io::scheduler::ScanScheduler::new(
+            dataset.object_store.clone(),
+            lance_io::scheduler::SchedulerConfig::max_bandwidth(&dataset.object_store),
+        );
+        let file_scheduler = scheduler
+            .open_file(&full_path, &lance_io::utils::CachedFileSize::unknown())
+            .await
+            .unwrap();
+        let reader = lance_file::reader::FileReader::try_open(
+            file_scheduler,
+            None,
+            Arc::<lance_encoding::decoder::DecoderPlugins>::default(),
+            &dataset
+                .session
+                .metadata_cache
+                .file_metadata_cache(&full_path),
+            dataset.file_reader_options.clone().unwrap_or_default(),
+        )
+        .await
+        .unwrap();
+
+        // Read and verify the stats using read_stream
+        use futures::StreamExt;
+        let mut stream = reader
+            .read_stream(
+                lance_io::ReadBatchParams::RangeFull,
+                1024,
+                0,
+                lance_io::utils::DecodeBatchScheduler::default(),
+            )
+            .unwrap();
+
+        let mut batches = vec![];
+        while let Some(batch_result) = stream.next().await {
+            batches.push(batch_result.unwrap());
+        }
+
+        assert!(!batches.is_empty());
+        let batch = &batches[0];
+
+        // Should have 2 columns (id and value)
+        assert_eq!(batch.num_rows(), 2);
+
+        // Verify schema
+        let column_names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let names: Vec<_> = (0..column_names.len())
+            .map(|i| column_names.value(i))
+            .collect();
+        assert!(names.contains(&"id"));
+        assert!(names.contains(&"value"));
+    }
+
+    #[tokio::test]
+    async fn test_compaction_skip_consolidation_when_disabled() {
+        use crate::dataset::WriteParams;
+
+        let test_dir = TempStrDir::default();
+        let test_uri = &test_dir;
+
+        let arrow_schema = Arc::new(ArrowSchema::new(vec![ArrowField::new(
+            "id",
+            DataType::Int32,
+            false,
+        )]));
+
+        let write_params = WriteParams {
+            max_rows_per_file: 100,
+            enable_column_stats: true,
+            ..Default::default()
+        };
+
+        // Write 3 small fragments
+        for i in 0..3 {
+            let batch = RecordBatch::try_new(
+                arrow_schema.clone(),
+                vec![Arc::new(Int32Array::from_iter_values(
+                    (i * 100)..((i + 1) * 100),
+                ))],
+            )
+            .unwrap();
+            let reader = RecordBatchIterator::new(vec![Ok(batch)], arrow_schema.clone());
+
+            if i == 0 {
+                Dataset::write(reader, test_uri, Some(write_params.clone()))
+                    .await
+                    .unwrap();
+            } else {
+                let dataset = Dataset::open(test_uri).await.unwrap();
+                let append_params = WriteParams {
+                    mode: crate::dataset::WriteMode::Append,
+                    enable_column_stats: true,
+                    ..Default::default()
+                };
+                Dataset::write(reader, test_uri, Some(append_params))
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let mut dataset = Dataset::open(test_uri).await.unwrap();
+
+        // Run compaction WITHOUT column stats consolidation
+        let options = CompactionOptions {
+            target_rows_per_fragment: 2_000,
+            consolidate_column_stats: false,
+            ..Default::default()
+        };
+
+        compact_files(&mut dataset, options, None).await.unwrap();
+
+        // Verify manifest does NOT have column stats file reference
+        dataset = Dataset::open(test_uri).await.unwrap();
+        let stats_file = dataset.manifest.config.get("lance.column_stats.file");
+        assert!(
+            stats_file.is_none(),
+            "Manifest should not contain column stats file when consolidation is disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_compaction_skip_consolidation_when_missing_stats() {
+        use crate::dataset::WriteParams;
+
+        let test_dir = TempStrDir::default();
+        let test_uri = &test_dir;
+
+        let arrow_schema = Arc::new(ArrowSchema::new(vec![ArrowField::new(
+            "id",
+            DataType::Int32,
+            false,
+        )]));
+
+        // First fragment WITH stats
+        let batch = RecordBatch::try_new(
+            arrow_schema.clone(),
+            vec![Arc::new(Int32Array::from_iter_values(0..100))],
+        )
+        .unwrap();
+        let reader = RecordBatchIterator::new(vec![Ok(batch)], arrow_schema.clone());
+        let write_params = WriteParams {
+            max_rows_per_file: 100,
+            enable_column_stats: true,
+            ..Default::default()
+        };
+        Dataset::write(reader, test_uri, Some(write_params))
+            .await
+            .unwrap();
+
+        // Second fragment WITHOUT stats
+        let batch = RecordBatch::try_new(
+            arrow_schema.clone(),
+            vec![Arc::new(Int32Array::from_iter_values(100..200))],
+        )
+        .unwrap();
+        let reader = RecordBatchIterator::new(vec![Ok(batch)], arrow_schema.clone());
+        let dataset = Dataset::open(test_uri).await.unwrap();
+        let append_params = WriteParams {
+            mode: crate::dataset::WriteMode::Append,
+            enable_column_stats: false,
+            ..Default::default()
+        };
+        Dataset::write(reader, test_uri, Some(append_params))
+            .await
+            .unwrap();
+
+        let mut dataset = Dataset::open(test_uri).await.unwrap();
+
+        // Run compaction WITH consolidation enabled, but it should skip
+        let options = CompactionOptions {
+            target_rows_per_fragment: 2_000,
+            consolidate_column_stats: true,
+            ..Default::default()
+        };
+
+        compact_files(&mut dataset, options, None).await.unwrap();
+
+        // Verify manifest does NOT have column stats file reference (skipped)
+        dataset = Dataset::open(test_uri).await.unwrap();
+        let stats_file = dataset.manifest.config.get("lance.column_stats.file");
+        assert!(
+            stats_file.is_none(),
+            "Manifest should not contain column stats file when some fragments lack stats"
+        );
+    }
 }

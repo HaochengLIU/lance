@@ -814,9 +814,8 @@ impl FileWriter {
     /// - max: String - Maximum value (serialized as string for compatibility)
     /// - (future fields can be added here without breaking compatibility)
     async fn build_column_statistics(&mut self) -> Result<()> {
-        let processors = match self.column_stats_processors.take() {
-            Some(processors) => processors,
-            None => return Ok(()), // Statistics not enabled
+        let Some(processors) = self.column_stats_processors.take() else {
+            return Ok(()); // Statistics not enabled
         };
 
         let schema = self.schema.as_ref().ok_or_else(|| {
