@@ -569,13 +569,12 @@ mod tests {
             let batch = RecordBatch::try_new(
                 schema.clone(),
                 vec![
-                    Arc::new(Int32Array::from_iter_values(
-                        (i * 100)..((i + 1) * 100),
-                    )),
+                    Arc::new(Int32Array::from_iter_values((i * 100)..((i + 1) * 100))),
                     Arc::new(ArrowStringArray::from_iter_values(
-                        (i * 100)..((i + 1) * 100)
-                            .map(|n| format!("name_{}", n))
-                            .collect::<Vec<_>>(),
+                        (i * 100)
+                            ..((i + 1) * 100)
+                                .map(|n| format!("name_{}", n))
+                                .collect::<Vec<_>>(),
                     )),
                 ],
             )
@@ -777,11 +776,8 @@ mod tests {
             false,
         )]));
 
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(Int32Array::from(vec![1]))],
-        )
-        .unwrap();
+        let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1]))])
+            .unwrap();
         let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
         let write_params = WriteParams {
             enable_column_stats: true,
@@ -819,13 +815,13 @@ mod tests {
 
         let batch = RecordBatch::try_new(
             schema.clone(),
-                vec![
-                    Arc::new(Int32Array::from_iter_values(0..100)),
-                    Arc::new(generate_random_array(RowCount::from(100))),
-                    Arc::new(ArrowStringArray::from_iter_values(
-                        (0..100).map(|i| format!("str_{}", i)),
-                    )),
-                ],
+            vec![
+                Arc::new(Int32Array::from_iter_values(0..100)),
+                Arc::new(generate_random_array(RowCount::from(100))),
+                Arc::new(ArrowStringArray::from_iter_values(
+                    (0..100).map(|i| format!("str_{}", i)),
+                )),
+            ],
         )
         .unwrap();
 

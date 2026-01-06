@@ -3734,9 +3734,7 @@ mod tests {
             let batch = RecordBatch::try_new(
                 arrow_schema.clone(),
                 vec![
-                    Arc::new(Int32Array::from_iter_values(
-                        (i * 100)..((i + 1) * 100),
-                    )),
+                    Arc::new(Int32Array::from_iter_values((i * 100)..((i + 1) * 100))),
                     Arc::new(Float32Array::from_iter_values(
                         ((i * 100)..((i + 1) * 100)).map(|n| n as f32),
                     )),
