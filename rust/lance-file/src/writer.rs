@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use arrow_array::{ArrayRef, RecordBatch, StringArray, UInt32Array, UInt64Array};
+use arrow_array::{
+    builder::{ListBuilder, StringBuilder, UInt32Builder, UInt64Builder},
+    ArrayRef, RecordBatch, StringArray,
+};
 use arrow_schema::{DataType, Field as ArrowField, Schema as ArrowSchema};
 use datafusion::functions_aggregate::min_max::{MaxAccumulator, MinAccumulator};
 use datafusion_common::ScalarValue;
@@ -823,28 +826,77 @@ impl FileWriter {
             )
         })?;
 
-        // Collect all zone statistics from all columns
+        // Column-oriented layout: one row per dataset column
+        // Each field contains a list of values (one per zone)
         let mut column_names = Vec::new();
-        let mut zone_starts = Vec::new();
-        let mut zone_lengths = Vec::new();
-        let mut null_counts = Vec::new();
-        let mut nan_counts = Vec::new();
-        let mut mins = Vec::new();
-        let mut maxs = Vec::new();
+        
+        // Create list builders with proper field definitions (non-nullable items)
+        let zone_starts_field = ArrowField::new("item", DataType::UInt64, false);
+        let mut zone_starts_builder = ListBuilder::new(UInt64Builder::with_capacity(processors.len()))
+            .with_field(zone_starts_field);
+        
+        let zone_lengths_field = ArrowField::new("item", DataType::UInt64, false);
+        let mut zone_lengths_builder = ListBuilder::new(UInt64Builder::with_capacity(processors.len()))
+            .with_field(zone_lengths_field);
+        
+        let null_counts_field = ArrowField::new("item", DataType::UInt32, false);
+        let mut null_counts_builder = ListBuilder::new(UInt32Builder::with_capacity(processors.len()))
+            .with_field(null_counts_field);
+        
+        let nan_counts_field = ArrowField::new("item", DataType::UInt32, false);
+        let mut nan_counts_builder = ListBuilder::new(UInt32Builder::with_capacity(processors.len()))
+            .with_field(nan_counts_field);
+        
+        let mins_field = ArrowField::new("item", DataType::Utf8, false);
+        let mut mins_builder = ListBuilder::new(StringBuilder::with_capacity(
+            processors.len(),
+            processors.len() * 32,
+        ))
+        .with_field(mins_field);
+        
+        let maxs_field = ArrowField::new("item", DataType::Utf8, false);
+        let mut maxs_builder = ListBuilder::new(StringBuilder::with_capacity(
+            processors.len(),
+            processors.len() * 32,
+        ))
+        .with_field(maxs_field);
 
         for (field, processor) in schema.fields.iter().zip(processors.into_iter()) {
             let zones = processor.finalize()?;
 
-            for zone in zones {
-                column_names.push(field.name.clone());
-                zone_starts.push(zone.bound.start);
-                zone_lengths.push(zone.bound.length as u64);
-                null_counts.push(zone.null_count);
-                nan_counts.push(zone.nan_count);
-                // Serialize ScalarValue as string for forward compatibility
-                mins.push(format!("{:?}", zone.min));
-                maxs.push(format!("{:?}", zone.max));
+            // Skip columns with no zones
+            if zones.is_empty() {
+                continue;
             }
+
+            column_names.push(field.name.clone());
+
+            // Build arrays for this column's zones
+            for zone in &zones {
+                zone_starts_builder
+                    .values()
+                    .append_value(zone.bound.start);
+                zone_lengths_builder
+                    .values()
+                    .append_value(zone.bound.length as u64);
+                null_counts_builder.values().append_value(zone.null_count);
+                nan_counts_builder.values().append_value(zone.nan_count);
+                // Serialize ScalarValue as string for forward compatibility
+                mins_builder
+                    .values()
+                    .append_value(format!("{:?}", zone.min));
+                maxs_builder
+                    .values()
+                    .append_value(format!("{:?}", zone.max));
+            }
+
+            // Finish the lists for this column (one row)
+            zone_starts_builder.append(true);
+            zone_lengths_builder.append(true);
+            null_counts_builder.append(true);
+            nan_counts_builder.append(true);
+            mins_builder.append(true);
+            maxs_builder.append(true);
         }
 
         // If no statistics were collected, return early
@@ -854,22 +906,47 @@ impl FileWriter {
 
         // Create Arrow arrays
         let column_name_array = Arc::new(StringArray::from(column_names)) as ArrayRef;
-        let zone_start_array = Arc::new(UInt64Array::from(zone_starts)) as ArrayRef;
-        let zone_length_array = Arc::new(UInt64Array::from(zone_lengths)) as ArrayRef;
-        let null_count_array = Arc::new(UInt32Array::from(null_counts)) as ArrayRef;
-        let nan_count_array = Arc::new(UInt32Array::from(nan_counts)) as ArrayRef;
-        let min_array = Arc::new(StringArray::from(mins)) as ArrayRef;
-        let max_array = Arc::new(StringArray::from(maxs)) as ArrayRef;
+        let zone_starts_array = Arc::new(zone_starts_builder.finish()) as ArrayRef;
+        let zone_lengths_array = Arc::new(zone_lengths_builder.finish()) as ArrayRef;
+        let null_counts_array = Arc::new(null_counts_builder.finish()) as ArrayRef;
+        let nan_counts_array = Arc::new(nan_counts_builder.finish()) as ArrayRef;
+        let mins_array = Arc::new(mins_builder.finish()) as ArrayRef;
+        let maxs_array = Arc::new(maxs_builder.finish()) as ArrayRef;
 
         // Create schema for the statistics RecordBatch
+        // Column-oriented: one row per dataset column, each field is a list
         let stats_schema = Arc::new(ArrowSchema::new(vec![
             ArrowField::new("column_name", DataType::Utf8, false),
-            ArrowField::new("zone_start", DataType::UInt64, false),
-            ArrowField::new("zone_length", DataType::UInt64, false),
-            ArrowField::new("null_count", DataType::UInt32, false),
-            ArrowField::new("nan_count", DataType::UInt32, false),
-            ArrowField::new("min", DataType::Utf8, false),
-            ArrowField::new("max", DataType::Utf8, false),
+            ArrowField::new(
+                "zone_starts",
+                DataType::List(Arc::new(ArrowField::new("item", DataType::UInt64, false))),
+                false,
+            ),
+            ArrowField::new(
+                "zone_lengths",
+                DataType::List(Arc::new(ArrowField::new("item", DataType::UInt64, false))),
+                false,
+            ),
+            ArrowField::new(
+                "null_counts",
+                DataType::List(Arc::new(ArrowField::new("item", DataType::UInt32, false))),
+                false,
+            ),
+            ArrowField::new(
+                "nan_counts",
+                DataType::List(Arc::new(ArrowField::new("item", DataType::UInt32, false))),
+                false,
+            ),
+            ArrowField::new(
+                "min_values",
+                DataType::List(Arc::new(ArrowField::new("item", DataType::Utf8, false))),
+                false,
+            ),
+            ArrowField::new(
+                "max_values",
+                DataType::List(Arc::new(ArrowField::new("item", DataType::Utf8, false))),
+                false,
+            ),
         ]));
 
         // Create RecordBatch
@@ -877,12 +954,12 @@ impl FileWriter {
             stats_schema,
             vec![
                 column_name_array,
-                zone_start_array,
-                zone_length_array,
-                null_count_array,
-                nan_count_array,
-                min_array,
-                max_array,
+                zone_starts_array,
+                zone_lengths_array,
+                null_counts_array,
+                nan_counts_array,
+                mins_array,
+                maxs_array,
             ],
         )
         .map_err(|e| {

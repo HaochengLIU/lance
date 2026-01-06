@@ -1421,15 +1421,21 @@ impl FileReader {
     /// Read column statistics from the file.
     ///
     /// Column statistics are stored as a global buffer containing an Arrow IPC
-    /// encoded RecordBatch. The batch has one row per zone per column, with
-    /// columns:
-    /// - `column_name`: UTF-8 - Name of the column
-    /// - `zone_start`: UInt64 - Starting row offset of the zone (fragment-local)
-    /// - `zone_length`: UInt64 - Number of rows in the zone
-    /// - `null_count`: UInt32 - Number of null values in the zone
-    /// - `nan_count`: UInt32 - Number of NaN values in the zone (for float types)
-    /// - `min`: UTF-8 - Minimum value in the zone (ScalarValue debug format)
-    /// - `max`: UTF-8 - Maximum value in the zone (ScalarValue debug format)
+    /// encoded RecordBatch. The batch uses a **column-oriented layout** with
+    /// one row per dataset column, optimized for selective column reads.
+    ///
+    /// Schema (one row per dataset column):
+    /// - `column_name`: UTF-8 - Name of the dataset column
+    /// - `zone_starts`: List<UInt64> - Starting row offsets of each zone (fragment-local)
+    /// - `zone_lengths`: List<UInt64> - Number of rows in each zone
+    /// - `null_counts`: List<UInt32> - Number of null values per zone
+    /// - `nan_counts`: List<UInt32> - Number of NaN values per zone (for float types)
+    /// - `min_values`: List<UTF-8> - Minimum value per zone (ScalarValue debug format)
+    /// - `max_values`: List<UTF-8> - Maximum value per zone (ScalarValue debug format)
+    ///
+    /// This column-oriented layout enables efficient reads: to get stats for a
+    /// single column (e.g., "age"), you only need to read one row. Arrow IPC's
+    /// columnar storage means reading `zone_starts` doesn't read `min_values`.
     ///
     /// # Returns
     ///
@@ -1483,7 +1489,9 @@ impl FileReader {
         let stats_bytes_vec = self
             .scheduler
             .submit_request(
-                vec![buffer_descriptor.position..buffer_descriptor.position + buffer_descriptor.size],
+                vec![
+                    buffer_descriptor.position..buffer_descriptor.position + buffer_descriptor.size,
+                ],
                 0,
             )
             .await?;
@@ -1503,12 +1511,11 @@ impl FileReader {
 
         // Decode Arrow IPC format
         let cursor = Cursor::new(stats_bytes.as_ref());
-        let mut reader = arrow_ipc::reader::FileReader::try_new(cursor, None).map_err(|e| {
-            Error::Internal {
+        let mut reader =
+            arrow_ipc::reader::FileReader::try_new(cursor, None).map_err(|e| Error::Internal {
                 message: format!("Failed to decode column stats Arrow IPC: {}", e),
                 location: location!(),
-            }
-        })?;
+            })?;
 
         // Read the single batch
         let batch = reader.next().transpose().map_err(|e| Error::Internal {
@@ -2462,28 +2469,28 @@ pub mod tests {
             .unwrap()
             .expect("Expected column stats to be present");
 
-        // Verify the schema of the stats batch
+        // Verify the schema of the stats batch (column-oriented)
         assert_eq!(stats_batch.num_columns(), 7);
         assert_eq!(
             stats_batch.schema().field(0).name(),
             "column_name",
-            "First column should be column_name"
+            "First field should be column_name"
         );
         assert_eq!(
             stats_batch.schema().field(1).name(),
-            "zone_start",
-            "Second column should be zone_start"
+            "zone_starts",
+            "Second field should be zone_starts (List)"
         );
         assert_eq!(
             stats_batch.schema().field(2).name(),
-            "zone_length",
-            "Third column should be zone_length"
+            "zone_lengths",
+            "Third field should be zone_lengths (List)"
         );
 
-        // Verify we have at least one zone of statistics
+        // Verify we have at least one row (one per dataset column)
         assert!(
             stats_batch.num_rows() > 0,
-            "Should have at least one zone of statistics"
+            "Should have at least one row (one per dataset column)"
         );
 
         // Verify column_name contains "data"
@@ -2493,6 +2500,18 @@ pub mod tests {
             .downcast_ref::<StringArray>()
             .unwrap();
         assert_eq!(column_names.value(0), "data");
+
+        // Verify zone_starts is a List array with at least one zone
+        use arrow_array::ListArray;
+        let zone_starts = stats_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        assert!(
+            zone_starts.value(0).len() > 0,
+            "Should have at least one zone for the 'data' column"
+        );
     }
 
     #[tokio::test]
